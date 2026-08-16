@@ -66,7 +66,8 @@ impl Document {
                             "OCS_REQUEST_TOKEN missing or invalid".to_string(),
                         )
                     })?;
-                let result = ProxyPluginRequestSender::connect_with_token("127.0.0.1", port, &token);
+                let result =
+                    ProxyPluginRequestSender::connect_with_token("127.0.0.1", port, &token);
                 if let Err(ref e) = result {
                     eprintln!("[python-repl] request proxy connect failed: {e}");
                 }
@@ -92,9 +93,10 @@ impl Document {
         }
         reader.refresh();
         if let Some(archived) = reader.payload() {
-            let mut index = self.handle_index.lock().map_err(|e| {
-                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
-            })?;
+            let mut index = self
+                .handle_index
+                .lock()
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
             index.clear();
             for (i, e) in archived.entities.iter().enumerate() {
                 index.insert(e.handle, i);
@@ -131,16 +133,16 @@ impl Document {
         let archived = reader.payload().ok_or_else(|| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("no archived document")
         })?;
-        let index = self.handle_index.lock().map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
-        })?;
+        let index = self
+            .handle_index
+            .lock()
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
         let Some(&idx) = index.get(&handle) else {
             return Ok(None);
         };
         let e = &archived.entities[idx];
-        let entity: EntityType = bincode::deserialize(&e.data).map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
-        })?;
+        let entity: EntityType = bincode::deserialize(&e.data)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
         Ok(Some(entity_to_py(py, &entity, e.handle)?))
     }
 
@@ -189,26 +191,19 @@ impl Document {
         Ok(counts)
     }
 
-    fn add<'py>(
-        &self,
-        py: Python<'py>,
-        entity: &Bound<'py, PyDict>,
-    ) -> PyResult<u64> {
+    fn add<'py>(&self, py: Python<'py>, entity: &Bound<'py, PyDict>) -> PyResult<u64> {
         let entity = py_to_entity(entity)?;
         let sender = require_sender(self)?;
         let interrupt: RefCell<Option<PyErr>> = RefCell::new(None);
-        let result = sender.request_with_poll(
-            PluginRequest::AddEntity(entity),
-            &mut || {
-                if let Err(e) = py.check_signals() {
-                    *interrupt.borrow_mut() = Some(e);
-                    return Err(ocs_plugin_api::host::PluginRequestError(
-                        "interrupted".to_string(),
-                    ));
-                }
-                Ok(())
-            },
-        );
+        let result = sender.request_with_poll(PluginRequest::AddEntity(entity), &mut || {
+            if let Err(e) = py.check_signals() {
+                *interrupt.borrow_mut() = Some(e);
+                return Err(ocs_plugin_api::host::PluginRequestError(
+                    "interrupted".to_string(),
+                ));
+            }
+            Ok(())
+        });
         if let Some(e) = interrupt.into_inner() {
             return Err(e);
         }
@@ -231,35 +226,32 @@ impl Document {
         let entities: Vec<EntityType> = entities
             .iter()
             .map(|item| {
-                let dict = item
-                    .downcast::<PyDict>()
-                    .map_err(|_| {
-                        PyErr::new::<pyo3::exceptions::PyTypeError, _>(
-                            "add_many expects a list of entity dicts",
-                        )
-                    })?;
+                let dict = item.downcast::<PyDict>().map_err(|_| {
+                    PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+                        "add_many expects a list of entity dicts",
+                    )
+                })?;
                 py_to_entity(dict)
             })
             .collect::<PyResult<_>>()?;
         let sender = require_sender(self)?;
         let interrupt: RefCell<Option<PyErr>> = RefCell::new(None);
-        let result = sender.request_with_poll(
-            PluginRequest::AddEntities(entities),
-            &mut || {
-                if let Err(e) = py.check_signals() {
-                    *interrupt.borrow_mut() = Some(e);
-                    return Err(ocs_plugin_api::host::PluginRequestError(
-                        "interrupted".to_string(),
-                    ));
-                }
-                Ok(())
-            },
-        );
+        let result = sender.request_with_poll(PluginRequest::AddEntities(entities), &mut || {
+            if let Err(e) = py.check_signals() {
+                *interrupt.borrow_mut() = Some(e);
+                return Err(ocs_plugin_api::host::PluginRequestError(
+                    "interrupted".to_string(),
+                ));
+            }
+            Ok(())
+        });
         if let Some(e) = interrupt.into_inner() {
             return Err(e);
         }
         match result {
-            Ok(PluginResponse::Handles(handles)) => Ok(handles.into_iter().map(|h| h.value()).collect()),
+            Ok(PluginResponse::Handles(handles)) => {
+                Ok(handles.into_iter().map(|h| h.value()).collect())
+            }
             Ok(other) => Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
                 "unexpected add_many response: {other:?}"
             ))),
@@ -269,26 +261,19 @@ impl Document {
         }
     }
 
-    fn update<'py>(
-        &self,
-        py: Python<'py>,
-        entity: &Bound<'py, PyDict>,
-    ) -> PyResult<bool> {
+    fn update<'py>(&self, py: Python<'py>, entity: &Bound<'py, PyDict>) -> PyResult<bool> {
         let entity = py_to_entity(entity)?;
         let sender = require_sender(self)?;
         let interrupt: RefCell<Option<PyErr>> = RefCell::new(None);
-        let result = sender.request_with_poll(
-            PluginRequest::UpdateEntity(entity),
-            &mut || {
-                if let Err(e) = py.check_signals() {
-                    *interrupt.borrow_mut() = Some(e);
-                    return Err(ocs_plugin_api::host::PluginRequestError(
-                        "interrupted".to_string(),
-                    ));
-                }
-                Ok(())
-            },
-        );
+        let result = sender.request_with_poll(PluginRequest::UpdateEntity(entity), &mut || {
+            if let Err(e) = py.check_signals() {
+                *interrupt.borrow_mut() = Some(e);
+                return Err(ocs_plugin_api::host::PluginRequestError(
+                    "interrupted".to_string(),
+                ));
+            }
+            Ok(())
+        });
         if let Some(e) = interrupt.into_inner() {
             return Err(e);
         }
@@ -416,12 +401,7 @@ impl Document {
     }
 
     /// Remove the XDATA record for `app_name` from `handle`.
-    fn remove_record<'py>(
-        &self,
-        py: Python<'py>,
-        handle: u64,
-        app_name: String,
-    ) -> PyResult<bool> {
+    fn remove_record<'py>(&self, py: Python<'py>, handle: u64, app_name: String) -> PyResult<bool> {
         let sender = require_sender(self)?;
         let interrupt: RefCell<Option<PyErr>> = RefCell::new(None);
         let result = sender.request_with_poll(

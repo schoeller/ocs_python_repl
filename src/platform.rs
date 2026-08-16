@@ -4,14 +4,20 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::OnceLock;
 
 use which::which;
 
+static PYTHON_EXE: OnceLock<Option<PathBuf>> = OnceLock::new();
+
 /// Find a suitable Python executable.
 ///
-/// On Windows this prefers the `py` launcher and avoids the Microsoft Store
-/// `python.exe` App Execution Alias, which cannot execute scripts from a
-/// non-interactive parent and prints a Store install message instead.
+/// The result is cached for the lifetime of the process because locating a
+/// real interpreter on Windows can require spawning several candidate
+/// executables to filter out the Microsoft Store alias stub.
+///
+/// The `OCS_PYTHON_EXE` environment variable is always checked first and is not
+/// cached, so users can still change it at runtime.
 pub fn python_executable() -> std::io::Result<PathBuf> {
     if let Ok(p) = std::env::var("OCS_PYTHON_EXE") {
         let path = PathBuf::from(p);
@@ -20,6 +26,16 @@ pub fn python_executable() -> std::io::Result<PathBuf> {
         }
     }
 
+    match PYTHON_EXE.get_or_init(discover_python) {
+        Some(path) => Ok(path.clone()),
+        None => Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "No usable Python interpreter found. Set OCS_PYTHON_EXE or install Python from python.org.",
+        )),
+    }
+}
+
+fn discover_python() -> Option<PathBuf> {
     let mut candidates: Vec<PathBuf> = Vec::new();
 
     #[cfg(windows)]
@@ -58,16 +74,7 @@ pub fn python_executable() -> std::io::Result<PathBuf> {
         candidates.push(PathBuf::from(r"C:\Python39\python.exe"));
     }
 
-    for candidate in candidates {
-        if is_valid_python(&candidate) {
-            return Ok(candidate);
-        }
-    }
-
-    Err(std::io::Error::new(
-        std::io::ErrorKind::NotFound,
-        "No usable Python interpreter found. Set OCS_PYTHON_EXE or install Python from python.org.",
-    ))
+    candidates.into_iter().find(|candidate| is_valid_python(candidate))
 }
 
 /// Verify that `path` is a real Python interpreter and not the Microsoft Store
@@ -110,12 +117,13 @@ pub fn current_exe_dir() -> PathBuf {
 /// lives in its own process group / job object so the whole subtree can be
 /// killed reliably.
 ///
-/// On Windows the wrapper is created with its own console that is hidden from
-/// the start via `STARTUPINFO.wShowWindow = SW_HIDE`. This gives the wrapper
-/// real console handles so it can launch IPython in a visible console that
-/// receives `Ctrl+C`, while keeping the wrapper itself invisible.
+/// On Windows the wrapper is created with `CREATE_NEW_CONSOLE` so it owns a
+/// visible console. IPython inherits that console, so there is exactly one
+/// console window per REPL session and `Ctrl+C` is handled by IPython.
 ///
-/// On Unix the wrapper is a normal headless child process.
+/// On Unix the wrapper is a normal headless child process that launches a
+/// terminal emulator; the user still sees exactly one terminal window per
+/// session.
 pub fn spawn_wrapper(
     python: &Path,
     session_dir: &Path,
@@ -140,14 +148,13 @@ fn spawn_wrapper_windows(
     use windows_sys::Win32::Foundation::{CloseHandle, GetLastError};
     use windows_sys::Win32::System::JobObjects::AssignProcessToJobObject;
     use windows_sys::Win32::System::Threading::{
-        CreateProcessW, PROCESS_INFORMATION, STARTUPINFOW, STARTF_USESHOWWINDOW,
+        CreateProcessW, PROCESS_INFORMATION, STARTUPINFOW,
     };
 
     const CREATE_NEW_CONSOLE: u32 = 0x00000010;
     const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
     const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x01000000;
     const CREATE_UNICODE_ENVIRONMENT: u32 = 0x00000400;
-    const SW_HIDE: u16 = 0;
 
     let app_name = to_wide_path(python);
     let args = to_wide("-u repl_wrapper.py");
@@ -156,8 +163,6 @@ fn spawn_wrapper_windows(
 
     let mut startup: STARTUPINFOW = unsafe { std::mem::zeroed() };
     startup.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
-    startup.dwFlags = STARTF_USESHOWWINDOW;
-    startup.wShowWindow = SW_HIDE;
 
     let mut proc_info: PROCESS_INFORMATION = unsafe { std::mem::zeroed() };
 
@@ -180,7 +185,10 @@ fn spawn_wrapper_windows(
     };
 
     let mut ok = attempt(
-        CREATE_NEW_CONSOLE | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB | CREATE_UNICODE_ENVIRONMENT,
+        CREATE_NEW_CONSOLE
+            | CREATE_NEW_PROCESS_GROUP
+            | CREATE_BREAKAWAY_FROM_JOB
+            | CREATE_UNICODE_ENVIRONMENT,
     );
     if ok == 0 {
         // Parent job may disallow breakaway; retry without that flag.
@@ -188,7 +196,9 @@ fn spawn_wrapper_windows(
     }
 
     if ok == 0 {
-        return Err(std::io::Error::from_raw_os_error(unsafe { GetLastError() } as i32));
+        return Err(std::io::Error::from_raw_os_error(
+            unsafe { GetLastError() } as i32
+        ));
     }
 
     let _ = unsafe { CloseHandle(proc_info.hThread) };
@@ -389,14 +399,18 @@ pub fn shutdown_group(group: &ProcessGroup, timeout: std::time::Duration) {
 
 #[cfg(windows)]
 pub fn shutdown_group(group: &ProcessGroup, timeout: std::time::Duration) {
-    use windows_sys::Win32::System::Console::{GenerateConsoleCtrlEvent, CTRL_BREAK_EVENT};
+    use windows_sys::Win32::System::Console::{
+        AttachConsole, FreeConsole, GenerateConsoleCtrlEvent, GetConsoleWindow, CTRL_BREAK_EVENT,
+    };
 
-    // Best-effort graceful shutdown: send Ctrl+Break to the wrapper's process
-    // group. The wrapper does not install a Windows handler, so the default
-    // behavior terminates it; the job object / subsequent hard kill cleans up
-    // any surviving descendants.
+    // Best-effort graceful shutdown: the wrapper and IPython share one console.
+    // Attach to that console and send Ctrl+Break. Both processes receive the
+    // event; the wrapper's handler terminates IPython and exits.
     unsafe {
-        let _ = GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, group.pid);
+        if GetConsoleWindow().is_null() && AttachConsole(group.pid) != 0 {
+            let _ = GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, 0);
+            let _ = FreeConsole();
+        }
     }
 
     let start = std::time::Instant::now();
@@ -472,7 +486,9 @@ impl ProcessGroup {
     /// Check whether the immediate child process is still alive.
     pub fn is_alive(&self) -> bool {
         use windows_sys::Win32::Foundation::CloseHandle;
-        use windows_sys::Win32::System::Threading::{GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+        use windows_sys::Win32::System::Threading::{
+            GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+        };
         const STILL_ACTIVE: u32 = 259;
 
         // Prefer the stored handle; if it is invalid, fall back to opening by PID.

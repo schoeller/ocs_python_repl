@@ -92,7 +92,11 @@ impl ReplSession {
         );
 
         let group = spawn_wrapper(&python, session_dir.root(), &env)?;
-        eprintln!("[python-repl] spawned wrapper pid={} alive={}", group.pid(), group.is_alive());
+        eprintln!(
+            "[python-repl] spawned wrapper pid={} alive={}",
+            group.pid(),
+            group.is_alive()
+        );
 
         let (proxy_shutdown, proxy_thread) = proxy_thread
             .map(|(tx, handle)| (Some(tx), Some(handle)))
@@ -105,14 +109,15 @@ impl ReplSession {
             proxy_thread,
         };
 
-        // Wait for the wrapper to start, up to ~2 s, polling every 50 ms.
+        // Wait briefly for an immediate wrapper crash (e.g. missing Python),
+        // up to ~500 ms, polling every 20 ms. The real REPL readiness is
+        // determined by the user seeing the IPython prompt in the terminal.
         let start = std::time::Instant::now();
-        while start.elapsed() < std::time::Duration::from_secs(2) {
-            if !session.is_alive() {
-                std::thread::sleep(std::time::Duration::from_millis(50));
-            } else {
+        while start.elapsed() < std::time::Duration::from_millis(500) {
+            if session.is_alive() {
                 break;
             }
+            std::thread::sleep(std::time::Duration::from_millis(20));
         }
         eprintln!(
             "[python-repl] wrapper alive after {:?}={}",

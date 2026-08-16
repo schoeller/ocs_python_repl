@@ -62,13 +62,9 @@ log(f"wrapper started: python={PYTHON} platform={sys.platform}")
 
 def check_ipython():
     try:
-        subprocess.run(
-            [PYTHON, "-c", "import IPython"],
-            check=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        return True
+        import importlib.util
+
+        return importlib.util.find_spec("IPython") is not None
     except Exception:
         return False
 
@@ -256,6 +252,24 @@ def install_signal_handlers(proc):
     signal.signal(signal.SIGINT, handler)
 
 
+def install_windows_signal_handlers(proc):
+    """Keep the wrapper alive while IPython handles Ctrl+C, and shut down the
+    child when the host sends Ctrl+Break to the shared console."""
+
+    def _ignore(signum, frame):
+        pass
+
+    def _shutdown(signum, frame):
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, _ignore)
+    signal.signal(signal.SIGBREAK, _shutdown)
+
+
 def main():
     try:
         if check_ipython():
@@ -273,14 +287,21 @@ def main():
         log(f"PYTHONPATH: {env.get('PYTHONPATH', '')}")
 
         if sys.platform == "win32":
-            # The wrapper has a hidden console created by the Rust host, so
-            # subprocess.Popen inherits real console handles. CREATE_NEW_CONSOLE
-            # gives IPython its own visible console where Ctrl+C works.
-            CREATE_NEW_CONSOLE = 0x00000010
-            proc = subprocess.Popen(cmd, env=env, creationflags=CREATE_NEW_CONSOLE)
+            # The host launches the wrapper with CREATE_NEW_CONSOLE, so the
+            # wrapper already owns a visible console. IPython inherits that
+            # console (no CREATE_NEW_CONSOLE). The wrapper ignores Ctrl+C so
+            # only IPython handles it, and catches Ctrl+Break to shut down the
+            # whole session when the host requests it.
+            proc = subprocess.Popen(cmd, env=env)
+            install_windows_signal_handlers(proc)
             log(f"spawned windows process pid={proc.pid}")
         else:
             proc = spawn_unix(cmd, env)
+            try:
+                with open(os.path.join(SESSION_DIR, "ipython.pid"), "w", encoding="utf-8") as f:
+                    f.write(str(proc.pid))
+            except Exception:
+                pass
             install_signal_handlers(proc)
             log(f"spawned unix process pid={proc.pid}")
 

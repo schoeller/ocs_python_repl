@@ -1,13 +1,13 @@
 //! PyO3 `_ocs` extension module: document binding and entity conversion.
 
 use acadrust::entities::{
-    Arc as CadArc, Circle, Ellipse, Entity as EntityTrait, Line, LwPolyline, LwVertex, MText, Point,
-    Polyline, Polyline2D, Polyline3D, Spline, SplineFlags,
+    Arc as CadArc, Circle, Ellipse, Entity as EntityTrait, Line, LwPolyline, LwVertex, MText,
+    Point, Polyline, Polyline2D, Polyline3D, Spline, SplineFlags,
 };
 use acadrust::xdata::{ExtendedDataRecord, XDataValue};
 use acadrust::EntityType;
-use pyo3::prelude::*;
 use pyo3::conversion::IntoPyObjectExt;
+use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
 use crate::document::Document;
@@ -125,11 +125,7 @@ fn ellipse_kwargs<'py>(py: Python<'py>, e: &Ellipse) -> PyResult<Bound<'py, PyDi
 
 fn polyline_kwargs<'py>(py: Python<'py>, p: &Polyline) -> PyResult<Bound<'py, PyDict>> {
     let dict = base_kwargs(py, p.common.layer.clone())?;
-    let pts: Vec<(f64, f64, f64)> = p
-        .vertices
-        .iter()
-        .map(|v| v3_tuple(&v.location))
-        .collect();
+    let pts: Vec<(f64, f64, f64)> = p.vertices.iter().map(|v| v3_tuple(&v.location)).collect();
     dict.set_item("points", pts)?;
     dict.set_item("closed", p.is_closed())?;
     Ok(dict)
@@ -137,11 +133,7 @@ fn polyline_kwargs<'py>(py: Python<'py>, p: &Polyline) -> PyResult<Bound<'py, Py
 
 fn polyline2d_kwargs<'py>(py: Python<'py>, p: &Polyline2D) -> PyResult<Bound<'py, PyDict>> {
     let dict = base_kwargs(py, p.common.layer.clone())?;
-    let pts: Vec<(f64, f64, f64)> = p
-        .vertices
-        .iter()
-        .map(|v| v3_tuple(&v.location))
-        .collect();
+    let pts: Vec<(f64, f64, f64)> = p.vertices.iter().map(|v| v3_tuple(&v.location)).collect();
     dict.set_item("points", pts)?;
     dict.set_item("closed", p.is_closed())?;
     dict.set_item("smooth_surface", smooth_surface_name(&p.smooth_surface))?;
@@ -155,11 +147,7 @@ fn polyline2d_kwargs<'py>(py: Python<'py>, p: &Polyline2D) -> PyResult<Bound<'py
 
 fn polyline3d_kwargs<'py>(py: Python<'py>, p: &Polyline3D) -> PyResult<Bound<'py, PyDict>> {
     let dict = base_kwargs(py, p.common.layer.clone())?;
-    let pts: Vec<(f64, f64, f64)> = p
-        .vertices
-        .iter()
-        .map(|v| v3_tuple(&v.position))
-        .collect();
+    let pts: Vec<(f64, f64, f64)> = p.vertices.iter().map(|v| v3_tuple(&v.position)).collect();
     dict.set_item("points", pts)?;
     dict.set_item("closed", p.flags.closed)?;
     dict.set_item("spline_fit", p.flags.spline_fit)?;
@@ -328,7 +316,11 @@ fn py_vector3(obj: &Bound<'_, PyAny>) -> PyResult<acadrust::types::Vector3> {
     Ok(acadrust::types::Vector3::new(x, y, z))
 }
 
-fn py_vector3_opt(entity: &Bound<'_, PyDict>, key: &str, default: acadrust::types::Vector3) -> acadrust::types::Vector3 {
+fn py_vector3_opt(
+    entity: &Bound<'_, PyDict>,
+    key: &str,
+    default: acadrust::types::Vector3,
+) -> acadrust::types::Vector3 {
     let Some(value) = entity.get_item(key).ok().flatten() else {
         return default;
     };
@@ -341,7 +333,10 @@ fn py_vector3_opt(entity: &Bound<'_, PyDict>, key: &str, default: acadrust::type
     }
 }
 
-fn smooth_surface_type(entity: &Bound<'_, PyDict>, key: &str) -> acadrust::entities::SmoothSurfaceType {
+fn smooth_surface_type(
+    entity: &Bound<'_, PyDict>,
+    key: &str,
+) -> acadrust::entities::SmoothSurfaceType {
     match get_opt_string(entity, key).as_str() {
         "QuadraticBSpline" => acadrust::entities::SmoothSurfaceType::QuadraticBSpline,
         "CubicBSpline" => acadrust::entities::SmoothSurfaceType::CubicBSpline,
@@ -350,7 +345,10 @@ fn smooth_surface_type(entity: &Bound<'_, PyDict>, key: &str) -> acadrust::entit
     }
 }
 
-fn smooth_surface_type_3d(entity: &Bound<'_, PyDict>, key: &str) -> acadrust::entities::polyline3d::SmoothSurfaceType {
+fn smooth_surface_type_3d(
+    entity: &Bound<'_, PyDict>,
+    key: &str,
+) -> acadrust::entities::polyline3d::SmoothSurfaceType {
     match get_opt_string(entity, key).as_str() {
         "QuadraticBSpline" => acadrust::entities::polyline3d::SmoothSurfaceType::QuadraticBSpline,
         "CubicBSpline" => acadrust::entities::polyline3d::SmoothSurfaceType::CubicBSpline,
@@ -478,13 +476,11 @@ fn py_to_xdata_value(dict: &Bound<'_, PyDict>) -> PyResult<XDataValue> {
             )
         })?
         .extract()?;
-    let value = dict
-        .get_item("value")?
-        .ok_or_else(|| {
-            PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "XDATA value dict missing 'value'".to_string(),
-            )
-        })?;
+    let value = dict.get_item("value")?.ok_or_else(|| {
+        PyErr::new::<pyo3::exceptions::PyValueError, _>(
+            "XDATA value dict missing 'value'".to_string(),
+        )
+    })?;
 
     match kind.as_str() {
         "String" => Ok(XDataValue::String(value.extract()?)),
@@ -533,48 +529,88 @@ pub fn py_to_entity(entity: &Bound<'_, PyDict>) -> PyResult<EntityType> {
             );
             set_common(&mut p, handle, layer);
             p.thickness = get_opt_f64(entity, "thickness", 0.0);
-            p.normal = py_vector3_opt(entity, "normal", acadrust::types::Vector3::new(0.0, 0.0, 1.0));
+            p.normal = py_vector3_opt(
+                entity,
+                "normal",
+                acadrust::types::Vector3::new(0.0, 0.0, 1.0),
+            );
             p.x_axis_angle = get_opt_f64(entity, "x_axis_angle", 0.0);
             Ok(EntityType::Point(p))
         }
         "Line" => {
             let mut l = Line::new();
             set_common(&mut l, handle, layer);
-            l.start = py_vector3_opt(entity, "start", acadrust::types::Vector3::new(0.0, 0.0, 0.0));
+            l.start = py_vector3_opt(
+                entity,
+                "start",
+                acadrust::types::Vector3::new(0.0, 0.0, 0.0),
+            );
             l.end = py_vector3_opt(entity, "end", acadrust::types::Vector3::new(0.0, 0.0, 0.0));
             l.thickness = get_opt_f64(entity, "thickness", 0.0);
-            l.normal = py_vector3_opt(entity, "normal", acadrust::types::Vector3::new(0.0, 0.0, 1.0));
+            l.normal = py_vector3_opt(
+                entity,
+                "normal",
+                acadrust::types::Vector3::new(0.0, 0.0, 1.0),
+            );
             Ok(EntityType::Line(l))
         }
         "Circle" => {
             let mut c = Circle::new();
             set_common(&mut c, handle, layer);
-            c.center = py_vector3_opt(entity, "center", acadrust::types::Vector3::new(0.0, 0.0, 0.0));
+            c.center = py_vector3_opt(
+                entity,
+                "center",
+                acadrust::types::Vector3::new(0.0, 0.0, 0.0),
+            );
             c.radius = get_opt_f64(entity, "radius", 1.0);
             c.thickness = get_opt_f64(entity, "thickness", 0.0);
-            c.normal = py_vector3_opt(entity, "normal", acadrust::types::Vector3::new(0.0, 0.0, 1.0));
+            c.normal = py_vector3_opt(
+                entity,
+                "normal",
+                acadrust::types::Vector3::new(0.0, 0.0, 1.0),
+            );
             Ok(EntityType::Circle(c))
         }
         "Arc" => {
             let mut a = CadArc::new();
             set_common(&mut a, handle, layer);
-            a.center = py_vector3_opt(entity, "center", acadrust::types::Vector3::new(0.0, 0.0, 0.0));
+            a.center = py_vector3_opt(
+                entity,
+                "center",
+                acadrust::types::Vector3::new(0.0, 0.0, 0.0),
+            );
             a.radius = get_opt_f64(entity, "radius", 1.0);
             a.start_angle = get_opt_f64(entity, "start_angle", 0.0);
             a.end_angle = get_opt_f64(entity, "end_angle", 0.0);
             a.thickness = get_opt_f64(entity, "thickness", 0.0);
-            a.normal = py_vector3_opt(entity, "normal", acadrust::types::Vector3::new(0.0, 0.0, 1.0));
+            a.normal = py_vector3_opt(
+                entity,
+                "normal",
+                acadrust::types::Vector3::new(0.0, 0.0, 1.0),
+            );
             Ok(EntityType::Arc(a))
         }
         "Ellipse" => {
             let mut e = Ellipse::default();
             set_common(&mut e, handle, layer);
-            e.center = py_vector3_opt(entity, "center", acadrust::types::Vector3::new(0.0, 0.0, 0.0));
-            e.major_axis = py_vector3_opt(entity, "major_axis", acadrust::types::Vector3::new(1.0, 0.0, 0.0));
+            e.center = py_vector3_opt(
+                entity,
+                "center",
+                acadrust::types::Vector3::new(0.0, 0.0, 0.0),
+            );
+            e.major_axis = py_vector3_opt(
+                entity,
+                "major_axis",
+                acadrust::types::Vector3::new(1.0, 0.0, 0.0),
+            );
             e.minor_axis_ratio = get_opt_f64(entity, "minor_axis_ratio", 0.5);
             e.start_parameter = get_opt_f64(entity, "start_parameter", 0.0);
             e.end_parameter = get_opt_f64(entity, "end_parameter", std::f64::consts::TAU);
-            e.normal = py_vector3_opt(entity, "normal", acadrust::types::Vector3::new(0.0, 0.0, 1.0));
+            e.normal = py_vector3_opt(
+                entity,
+                "normal",
+                acadrust::types::Vector3::new(0.0, 0.0, 1.0),
+            );
             Ok(EntityType::Ellipse(e))
         }
         "Polyline" => {
@@ -582,9 +618,10 @@ pub fn py_to_entity(entity: &Bound<'_, PyDict>) -> PyResult<EntityType> {
             set_common(&mut p, handle, layer);
             if let Some(pts) = entity.get_item("points").ok().flatten() {
                 let pts = point_list(&pts)?;
-                p.vertices = pts.into_iter().map(|v| {
-                    acadrust::entities::Vertex3D::new(v)
-                }).collect();
+                p.vertices = pts
+                    .into_iter()
+                    .map(acadrust::entities::Vertex3D::new)
+                    .collect();
             }
             Ok(EntityType::Polyline(p))
         }
@@ -596,12 +633,17 @@ pub fn py_to_entity(entity: &Bound<'_, PyDict>) -> PyResult<EntityType> {
             p.end_width = get_opt_f64(entity, "end_width", 0.0);
             p.thickness = get_opt_f64(entity, "thickness", 0.0);
             p.elevation = get_opt_f64(entity, "elevation", 0.0);
-            p.normal = py_vector3_opt(entity, "normal", acadrust::types::Vector3::new(0.0, 0.0, 1.0));
+            p.normal = py_vector3_opt(
+                entity,
+                "normal",
+                acadrust::types::Vector3::new(0.0, 0.0, 1.0),
+            );
             if let Some(pts) = entity.get_item("points").ok().flatten() {
                 let pts = point_list(&pts)?;
-                p.vertices = pts.into_iter().map(|v| {
-                    acadrust::entities::Vertex2D::new(v)
-                }).collect();
+                p.vertices = pts
+                    .into_iter()
+                    .map(acadrust::entities::Vertex2D::new)
+                    .collect();
             }
             Ok(EntityType::Polyline2D(p))
         }
@@ -622,12 +664,17 @@ pub fn py_to_entity(entity: &Bound<'_, PyDict>) -> PyResult<EntityType> {
             p.smooth_m_density = get_opt_u64(entity, "smooth_m_density", 0) as u16;
             p.smooth_n_density = get_opt_u64(entity, "smooth_n_density", 0) as u16;
             p.elevation = get_opt_f64(entity, "elevation", 0.0);
-            p.normal = py_vector3_opt(entity, "normal", acadrust::types::Vector3::new(0.0, 0.0, 1.0));
+            p.normal = py_vector3_opt(
+                entity,
+                "normal",
+                acadrust::types::Vector3::new(0.0, 0.0, 1.0),
+            );
             if let Some(pts) = entity.get_item("points").ok().flatten() {
                 let pts = point_list(&pts)?;
-                p.vertices = pts.into_iter().map(|v| {
-                    acadrust::entities::Vertex3DPolyline::new(v)
-                }).collect();
+                p.vertices = pts
+                    .into_iter()
+                    .map(acadrust::entities::Vertex3DPolyline::new)
+                    .collect();
             }
             Ok(EntityType::Polyline3D(p))
         }
@@ -639,11 +686,16 @@ pub fn py_to_entity(entity: &Bound<'_, PyDict>) -> PyResult<EntityType> {
             p.constant_width = get_opt_f64(entity, "constant_width", 0.0);
             p.elevation = get_opt_f64(entity, "elevation", 0.0);
             p.thickness = get_opt_f64(entity, "thickness", 0.0);
-            p.normal = py_vector3_opt(entity, "normal", acadrust::types::Vector3::new(0.0, 0.0, 1.0));
+            p.normal = py_vector3_opt(
+                entity,
+                "normal",
+                acadrust::types::Vector3::new(0.0, 0.0, 1.0),
+            );
             if let Some(pts) = entity.get_item("points").ok().flatten() {
-                p.vertices = point_list(&pts)?.into_iter().map(|v| {
-                    LwVertex::new(acadrust::types::Vector2::new(v.x, v.y))
-                }).collect();
+                p.vertices = point_list(&pts)?
+                    .into_iter()
+                    .map(|v| LwVertex::new(acadrust::types::Vector2::new(v.x, v.y)))
+                    .collect();
             }
             Ok(EntityType::LwPolyline(p))
         }
@@ -674,12 +726,24 @@ pub fn py_to_entity(entity: &Bound<'_, PyDict>) -> PyResult<EntityType> {
                 .map(|obj| point_list(&obj))
                 .transpose()?
                 .unwrap_or_default();
-            s.normal = py_vector3_opt(entity, "normal", acadrust::types::Vector3::new(0.0, 0.0, 1.0));
+            s.normal = py_vector3_opt(
+                entity,
+                "normal",
+                acadrust::types::Vector3::new(0.0, 0.0, 1.0),
+            );
             s.knot_tolerance = get_opt_f64(entity, "knot_tolerance", 1e-7);
             s.control_tolerance = get_opt_f64(entity, "control_tolerance", 1e-7);
             s.fit_tolerance = get_opt_f64(entity, "fit_tolerance", 1e-10);
-            s.begin_tangent = py_vector3_opt(entity, "begin_tangent", acadrust::types::Vector3::new(0.0, 0.0, 0.0));
-            s.end_tangent = py_vector3_opt(entity, "end_tangent", acadrust::types::Vector3::new(0.0, 0.0, 0.0));
+            s.begin_tangent = py_vector3_opt(
+                entity,
+                "begin_tangent",
+                acadrust::types::Vector3::new(0.0, 0.0, 0.0),
+            );
+            s.end_tangent = py_vector3_opt(
+                entity,
+                "end_tangent",
+                acadrust::types::Vector3::new(0.0, 0.0, 0.0),
+            );
             s.knot_parameterization = get_opt_i32(entity, "knot_parameterization", 0);
             s.cv_frame_visible = get_opt_bool(entity, "cv_frame_visible", false);
             s.dwg_flags1 = get_opt_i32(entity, "dwg_flags1", 0);
@@ -689,7 +753,11 @@ pub fn py_to_entity(entity: &Bound<'_, PyDict>) -> PyResult<EntityType> {
             let mut t = MText::default();
             set_common(&mut t, handle, layer);
             t.value = get_opt_string(entity, "text");
-            t.insertion_point = py_vector3_opt(entity, "insertion", acadrust::types::Vector3::new(0.0, 0.0, 0.0));
+            t.insertion_point = py_vector3_opt(
+                entity,
+                "insertion",
+                acadrust::types::Vector3::new(0.0, 0.0, 0.0),
+            );
             t.height = get_opt_f64(entity, "height", 1.0);
             Ok(EntityType::MText(t))
         }
@@ -726,14 +794,18 @@ mod roundtrip_tests {
         // full `ocs` package (which requires the compiled Rust extension).
         let python_dir = std::path::PathBuf::from(std::env!("OUT_DIR")).join("python");
         let entities_path = python_dir.join("ocs/entities.py");
-        let code = std::fs::read_to_string(&entities_path)
-            .expect("generated entities.py should exist");
+        let code =
+            std::fs::read_to_string(&entities_path).expect("generated entities.py should exist");
         #[allow(deprecated)]
         let entities_mod = PyModule::from_code_bound(py, &code, "entities.py", "ocs.entities")?;
         let ocs_mod = PyModule::new(py, "ocs")?;
         ocs_mod.setattr("entities", &entities_mod)?;
-        py.import("sys")?.getattr("modules")?.set_item("ocs", &ocs_mod)?;
-        py.import("sys")?.getattr("modules")?.set_item("ocs.entities", &entities_mod)?;
+        py.import("sys")?
+            .getattr("modules")?
+            .set_item("ocs", &ocs_mod)?;
+        py.import("sys")?
+            .getattr("modules")?
+            .set_item("ocs.entities", &entities_mod)?;
 
         let handle = entity.common().handle.value();
         let obj = entity_to_py(py, &entity, handle)?;
@@ -865,7 +937,10 @@ mod roundtrip_tests {
             if let EntityType::Ellipse(f) = rt {
                 assert_eq!(f.common.handle.value(), 10);
                 assert_v3_eq(&f.center, &acadrust::types::Vector3::new(10.0, 20.0, 0.0));
-                assert_v3_eq(&f.major_axis, &acadrust::types::Vector3::new(30.0, 0.0, 0.0));
+                assert_v3_eq(
+                    &f.major_axis,
+                    &acadrust::types::Vector3::new(30.0, 0.0, 0.0),
+                );
                 assert_f64_eq(f.minor_axis_ratio, 0.5, "ellipse ratio");
                 assert_f64_eq(f.start_parameter, 0.0, "ellipse start");
                 assert_f64_eq(f.end_parameter, std::f64::consts::TAU, "ellipse end");
@@ -893,8 +968,14 @@ mod roundtrip_tests {
             if let EntityType::Polyline(q) = rt {
                 assert_eq!(q.common.handle.value(), 11);
                 assert_eq!(q.vertices.len(), 3);
-                assert_v3_eq(&q.vertices[0].location, &acadrust::types::Vector3::new(0.0, 0.0, 0.0));
-                assert_v3_eq(&q.vertices[2].location, &acadrust::types::Vector3::new(1.0, 1.0, 0.0));
+                assert_v3_eq(
+                    &q.vertices[0].location,
+                    &acadrust::types::Vector3::new(0.0, 0.0, 0.0),
+                );
+                assert_v3_eq(
+                    &q.vertices[2].location,
+                    &acadrust::types::Vector3::new(1.0, 1.0, 0.0),
+                );
             } else {
                 panic!("wrong kind");
             }
@@ -933,8 +1014,12 @@ mod roundtrip_tests {
             let mut p = Polyline3D::default();
             p.common.handle = Handle::new(13);
             p.vertices = vec![
-                acadrust::entities::Vertex3DPolyline::new(acadrust::types::Vector3::new(0.0, 0.0, 0.0)),
-                acadrust::entities::Vertex3DPolyline::new(acadrust::types::Vector3::new(0.0, 0.0, 3.0)),
+                acadrust::entities::Vertex3DPolyline::new(acadrust::types::Vector3::new(
+                    0.0, 0.0, 0.0,
+                )),
+                acadrust::entities::Vertex3DPolyline::new(acadrust::types::Vector3::new(
+                    0.0, 0.0, 3.0,
+                )),
             ];
             p.flags.closed = true;
 
@@ -1019,7 +1104,10 @@ mod roundtrip_tests {
             if let EntityType::MText(u) = rt {
                 assert_eq!(u.common.handle.value(), 16);
                 assert_eq!(u.value, "hello");
-                assert_v3_eq(&u.insertion_point, &acadrust::types::Vector3::new(5.0, 5.0, 0.0));
+                assert_v3_eq(
+                    &u.insertion_point,
+                    &acadrust::types::Vector3::new(5.0, 5.0, 0.0),
+                );
                 assert_f64_eq(u.height, 2.5, "mtext height");
             } else {
                 panic!("wrong kind");
@@ -1047,7 +1135,10 @@ mod roundtrip_tests {
 
             assert_eq!(roundtripped.application_name, "PYREPL");
             assert_eq!(roundtripped.values.len(), 4);
-            assert_eq!(roundtripped.values[0], XDataValue::String("hello".to_string()));
+            assert_eq!(
+                roundtripped.values[0],
+                XDataValue::String("hello".to_string())
+            );
             assert_eq!(roundtripped.values[1], XDataValue::Real(3.14));
             assert_eq!(roundtripped.values[2], XDataValue::Integer32(42));
             assert_eq!(
