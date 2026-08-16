@@ -1,0 +1,30 @@
+[package]
+name = "ocs_python_repl"
+version = "0.1.0"
+edition = "2021"
+description = "Python REPL plugin for Open CAD Studio (API v4)."
+license = "GPL-3.0-only"
+
+[workspace]
+
+[lib]
+name = "ocs_python_repl"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+ocs_plugin_api = { path = "../ocs_plugin_api", features = ["host"] }
+acadrust = { git = "https://github.com/HakanSeven12/cadcodec.git", rev = "931c4ab", features = ["serde"] }
+pyo3 = { version = "0.23", features = ["extension-module", "abi3-py38"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+bincode = "1"
+memmap2 = "0.9"
+anyhow = "1"
+which = "7"
+getrandom = "0.2"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_System_Diagnostics", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Console"] }
