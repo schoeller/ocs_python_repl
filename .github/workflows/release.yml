@@ -31,7 +31,7 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -41,6 +41,7 @@ jobs:
           python-version: '3.12'
 
       - name: Build release cdylib
+        shell: bash
         env:
           PYO3_PYTHON: python
         run: cargo build --release --locked
@@ -54,8 +55,9 @@ jobs:
           cp target/release/*.${{ matrix.ext }} "dist/${{ matrix.asset }}"
           cp plugin.toml dist/plugin.toml
 
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
+          tag_name: ${{ github.ref_name }}
           files: |
             dist/${{ matrix.asset }}
             dist/plugin.toml
