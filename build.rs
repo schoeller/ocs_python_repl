@@ -16,6 +16,10 @@ fn main() {
     println!("cargo:rerun-if-changed=ocs/__init__.py");
     println!("cargo:rerun-if-changed=crud_manifest.json");
 
+    // PyO3's extension-module feature does not link libpython on Unix. On
+    // macOS the linker must be told to resolve Python symbols at load time.
+    pyo3_build_config::add_extension_module_link_args();
+
     write_repl_wrapper(&dest);
     write_startup(&dest);
     write_ocs_init(&dest);

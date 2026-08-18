@@ -36,3 +36,7 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_
 ocs_plugin_api = { git = "https://github.com/HakanSeven12/OpenCADStudio", features = ["host"] }
 serde = { version = "=1.0.228", features = ["derive"] }
 serde_json = "1"
+# PyO3's extension-module feature intentionally does not link libpython on Unix.
+# This helper emits the macOS linker flags needed to allow unresolved Python
+# symbols to be resolved at load time.
+pyo3-build-config = "0.23"

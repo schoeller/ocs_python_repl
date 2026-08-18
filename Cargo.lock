@@ -610,6 +610,7 @@ dependencies = [
  "memmap2",
  "ocs_plugin_api",
  "pyo3",
+ "pyo3-build-config",
  "serde",
  "serde_json",
  "which",
