@@ -13,6 +13,23 @@ pub struct SessionDir {
     root: PathBuf,
 }
 
+/// Python files generated at compile time by `build.rs`, embedded into the
+/// cdylib so the plugin works when installed on a machine without the build
+/// tree.
+mod embedded {
+    pub const REPL_WRAPPER: &str = include_str!(concat!(env!("OUT_DIR"), "/python/repl_wrapper.py"));
+    pub const STARTUP: &str = include_str!(concat!(env!("OUT_DIR"), "/python/startup.py"));
+    pub const OCS_INIT: &str = include_str!(concat!(env!("OUT_DIR"), "/python/ocs/__init__.py"));
+    pub const OCS_INIT_STUB: &str =
+        include_str!(concat!(env!("OUT_DIR"), "/python/ocs/__init__.pyi"));
+    pub const OCS_EXTENSION_STUB: &str =
+        include_str!(concat!(env!("OUT_DIR"), "/python/ocs/_ocs.pyi"));
+    pub const ENTITIES: &str = include_str!(concat!(env!("OUT_DIR"), "/python/ocs/entities.py"));
+    pub const ENTITIES_STUB: &str =
+        include_str!(concat!(env!("OUT_DIR"), "/python/ocs/entities.pyi"));
+    pub const PY_TYPED: &str = include_str!(concat!(env!("OUT_DIR"), "/python/py.typed"));
+}
+
 impl SessionDir {
     /// Create a temp session directory for `tab_id` and copy the build-generated
     /// Python files into it.
@@ -29,8 +46,17 @@ impl SessionDir {
         ));
         fs::create_dir_all(&root)?;
 
-        let generated = PathBuf::from(env!("OUT_DIR")).join("python");
-        copy_dir_all(&generated, &root)?;
+        let ocs_dir = root.join("ocs");
+        fs::create_dir_all(&ocs_dir)?;
+
+        write_file(&root.join("repl_wrapper.py"), embedded::REPL_WRAPPER)?;
+        write_file(&root.join("startup.py"), embedded::STARTUP)?;
+        write_file(&ocs_dir.join("__init__.py"), embedded::OCS_INIT)?;
+        write_file(&ocs_dir.join("__init__.pyi"), embedded::OCS_INIT_STUB)?;
+        write_file(&ocs_dir.join("_ocs.pyi"), embedded::OCS_EXTENSION_STUB)?;
+        write_file(&ocs_dir.join("entities.py"), embedded::ENTITIES)?;
+        write_file(&ocs_dir.join("entities.pyi"), embedded::ENTITIES_STUB)?;
+        write_file(&root.join("py.typed"), embedded::PY_TYPED)?;
 
         Ok(Self { root })
     }
@@ -62,21 +88,10 @@ impl SessionDir {
     }
 }
 
-fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
-    fs::create_dir_all(dst)?;
-    for entry in fs::read_dir(src)? {
-        let entry = entry?;
-        let src_path = entry.path();
-        let file_name = src_path.file_name().expect("entry has a name");
-        let dst_path = dst.join(file_name);
-        if src_path.is_dir() {
-            copy_dir_all(&src_path, &dst_path)?;
-        } else {
-            fs::copy(&src_path, &dst_path)?;
-        }
-    }
-    Ok(())
+fn write_file(path: &Path, content: &str) -> std::io::Result<()> {
+    fs::write(path, content.as_bytes())
 }
+
 
 #[cfg(test)]
 mod tests {
