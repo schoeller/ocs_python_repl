@@ -13,9 +13,10 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 # Standalone plugin builds pull the stable host contract from the upstream
-# OpenCADStudio repo. When developing inside the OpenCADStudio monorepo, you
-# can temporarily replace this with `path = "../ocs_plugin_api"`.
-ocs_plugin_api = { git = "https://github.com/HakanSeven12/OpenCADStudio", features = ["host"] }
+# OpenCADStudio repo. The rev MUST match the host release you are targeting.
+# When developing inside the OpenCADStudio monorepo, you can temporarily
+# replace this with `path = "../ocs_plugin_api"`.
+ocs_plugin_api = { git = "https://github.com/HakanSeven12/OpenCADStudio", rev = "fcd4a278e40f3a38614427991fc67ef6a402c972", features = ["host"] }
 acadrust = { git = "https://github.com/HakanSeven12/cadcodec.git", rev = "931c4ab", features = ["serde"] }
 pyo3 = { version = "0.23", features = ["extension-module", "abi3-py38"] }
 serde = { version = "=1.0.228", features = ["derive"] }
@@ -33,7 +34,8 @@ libc = "0.2"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_System_Diagnostics", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Console"] }
 
 [build-dependencies]
-ocs_plugin_api = { git = "https://github.com/HakanSeven12/OpenCADStudio", features = ["host"] }
+# Must stay in sync with the runtime dependency above.
+ocs_plugin_api = { git = "https://github.com/HakanSeven12/OpenCADStudio", rev = "fcd4a278e40f3a38614427991fc67ef6a402c972", features = ["host"] }
 serde = { version = "=1.0.228", features = ["derive"] }
 serde_json = "1"
 # PyO3's extension-module feature intentionally does not link libpython on Unix.
