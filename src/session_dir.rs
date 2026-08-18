@@ -1,9 +1,9 @@
 //! Temporary session directory for a Python REPL tab.
 //!
-//! Each `PYTHONSHELL` invocation creates a directory containing the generated
-//! `repl_wrapper.py`, `startup.py`, `ocs` package, stubs, and `py.typed`. The
-//! compiled `_ocs` extension is *not* copied; it is loaded from the plugin
-//! directory via `PYTHONPATH`.
+//! Each `PYTHONSHELL` invocation creates a directory containing the
+//! build-generated `repl_wrapper.py`, `startup.py`, `ocs` package, stubs, and
+//! `py.typed`. The compiled `_ocs` extension is *not* copied; it is loaded from
+//! the plugin directory via `PYTHONPATH`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -14,8 +14,8 @@ pub struct SessionDir {
 }
 
 impl SessionDir {
-    /// Create a temp session directory for `tab_id` and copy the generated
-    /// Python files from `OUT_DIR/python/` into it.
+    /// Create a temp session directory for `tab_id` and copy the build-generated
+    /// Python files into it.
     pub fn create(tab_id: u64) -> std::io::Result<Self> {
         let mut root = std::env::temp_dir();
         root.push(format!(
@@ -30,7 +30,7 @@ impl SessionDir {
         fs::create_dir_all(&root)?;
 
         let generated = PathBuf::from(env!("OUT_DIR")).join("python");
-        copy_generated(&generated, &root)?;
+        copy_dir_all(&generated, &root)?;
 
         Ok(Self { root })
     }
@@ -60,21 +60,6 @@ impl SessionDir {
         }
         Err(last_err.unwrap())
     }
-}
-
-fn copy_generated(generated: &Path, root: &Path) -> std::io::Result<()> {
-    for entry in fs::read_dir(generated)? {
-        let entry = entry?;
-        let src = entry.path();
-        let file_name = src.file_name().expect("generated entry has a name");
-        let dest = root.join(file_name);
-        if src.is_dir() {
-            copy_dir_all(&src, &dest)?;
-        } else {
-            fs::copy(&src, &dest)?;
-        }
-    }
-    Ok(())
 }
 
 fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {

@@ -22,7 +22,7 @@ e = Ellipse(
     start_parameter=0.0,
     end_parameter=6.283185307179586,
 )
-ellipse_handle = ocs.doc.add({"kind": "Ellipse", **e.__dict__})
+ellipse_handle = ocs.doc.add(e)
 print(f"Added Ellipse handle={ellipse_handle}")
 
 # Polyline2D -------------------------------------------------------------------
@@ -31,7 +31,7 @@ p2d = Polyline2D(
     closed=True,
     elevation=5.0,
 )
-p2d_handle = ocs.doc.add({"kind": "Polyline2D", **p2d.__dict__})
+p2d_handle = ocs.doc.add(p2d)
 print(f"Added Polyline2D handle={p2d_handle}")
 
 # Polyline3D --------------------------------------------------------------------
@@ -39,7 +39,7 @@ p3d = Polyline3D(
     points=[(0.0, 0.0, 0.0), (0.0, 0.0, 10.0), (10.0, 0.0, 10.0)],
     closed=False,
 )
-p3d_handle = ocs.doc.add({"kind": "Polyline3D", **p3d.__dict__})
+p3d_handle = ocs.doc.add(p3d)
 print(f"Added Polyline3D handle={p3d_handle}")
 
 # LwPolyline --------------------------------------------------------------------
@@ -48,7 +48,7 @@ lw = LwPolyline(
     closed=True,
     constant_width=0.5,
 )
-lw_handle = ocs.doc.add({"kind": "LwPolyline", **lw.__dict__})
+lw_handle = ocs.doc.add(lw)
 print(f"Added LwPolyline handle={lw_handle}")
 
 # Spline -----------------------------------------------------------------------
@@ -58,12 +58,12 @@ s = Spline(
     knots=[0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0],
     weights=[1.0, 1.0, 1.0, 1.0],
 )
-spline_handle = ocs.doc.add({"kind": "Spline", **s.__dict__})
+spline_handle = ocs.doc.add(s)
 print(f"Added Spline handle={spline_handle}")
 
 # MText ------------------------------------------------------------------------
 t = MText(text="Advanced entities", insertion=(10.0, 150.0, 0.0), height=5.0)
-text_handle = ocs.doc.add({"kind": "MText", **t.__dict__})
+text_handle = ocs.doc.add(t)
 print(f"Added MText handle={text_handle}")
 
 # Support types are available for building dictionaries manually.

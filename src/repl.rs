@@ -21,16 +21,28 @@ pub struct ReplSession {
 impl ReplSession {
     /// Spawn a new REPL session for `tab_id`.
     pub fn spawn(host: &mut dyn HostApi, tab_id: u64) -> anyhow::Result<Self> {
+        crate::document::debug_log("ReplSession::spawn start");
         let python = python_executable()?;
+        crate::document::debug_log("ReplSession::spawn found python");
 
         // Open the V4 document view before starting Python.
         let doc_info = host
             .document_view_v4(tab_id)
             .ok_or_else(|| anyhow::anyhow!("host did not provide a V4 document view"))?;
+        crate::document::debug_log(&format!(
+            "ReplSession::spawn document_view_v4 path={} version={}",
+            doc_info.path, doc_info.version
+        ));
         let snapshot_path = doc_info.path.clone();
+        eprintln!(
+            "[python-repl] V4 snapshot path: {} (size {:?})",
+            snapshot_path,
+            std::fs::metadata(&snapshot_path).map(|m| m.len()).ok()
+        );
 
         // Create the session directory with generated Python files.
         let session_dir = SessionDir::create(tab_id)?;
+        crate::document::debug_log("ReplSession::spawn session dir created");
         eprintln!(
             "[python-repl] session directory: {}",
             session_dir.root().display()
@@ -42,11 +54,14 @@ impl ReplSession {
         // processes cannot forward privileged host requests.
         let request_listener = TcpListener::bind(("127.0.0.1", 0))?;
         let request_port = request_listener.local_addr()?.port();
+        crate::document::debug_log(&format!("ReplSession::spawn request proxy port={request_port}"));
         let mut request_token = [0u8; PROXY_TOKEN_LEN];
         getrandom::getrandom(&mut request_token)
             .map_err(|e| std::io::Error::other(e.to_string()))?;
+        crate::document::debug_log("ReplSession::spawn request token generated");
 
         let proxy_thread = if let Some(request_sender) = host.plugin_request_sender() {
+            crate::document::debug_log("ReplSession::spawn starting request proxy thread");
             let request_sender = Arc::from(request_sender);
             let (shutdown_tx, shutdown_rx) = std::sync::mpsc::channel::<()>();
             let handle = std::thread::spawn(move || {
@@ -57,8 +72,10 @@ impl ReplSession {
                     shutdown_rx,
                 );
             });
+            crate::document::debug_log("ReplSession::spawn request proxy thread spawned");
             Some((shutdown_tx, handle))
         } else {
+            crate::document::debug_log("ReplSession::spawn no request sender");
             None
         };
 
@@ -97,6 +114,11 @@ impl ReplSession {
             group.pid(),
             group.is_alive()
         );
+        crate::document::debug_log(&format!(
+            "ReplSession::spawn wrapper pid={} alive={}",
+            group.pid(),
+            group.is_alive()
+        ));
 
         let (proxy_shutdown, proxy_thread) = proxy_thread
             .map(|(tx, handle)| (Some(tx), Some(handle)))
@@ -124,6 +146,10 @@ impl ReplSession {
             start.elapsed(),
             session.is_alive()
         );
+        crate::document::debug_log(&format!(
+            "ReplSession::spawn end alive={}",
+            session.is_alive()
+        ));
 
         Ok(session)
     }

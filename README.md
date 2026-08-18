@@ -32,6 +32,130 @@ On host shutdown the V4 runner receives a graceful shutdown request, every activ
 session is dropped, and each session kills its wrapper child and deletes its temp
 session dir.
 
+## Binding generation
+
+The Python entity classes, stubs, and Rust `entity_to_py` / `py_to_entity`
+conversions are generated at **build time**, not at runtime. The
+`ocs_plugin_api` embedded type registry
+(`get_embedded_type_registry_json()`) is the single source of truth for
+`acadrust` field types; `crud_manifest.json` is a type-filtered public-API
+projection on top of that registry.
+
+### Architecture
+
+```text
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ocs_plugin_api build output                                                 │
+│   OUT_DIR/type_registry.json  (serde-reflection of allow-listed acadrust   │
+│                                types: Point, Line, Spline, EntityCommon, ...) │
+└──────────────────────────────┬──────────────────────────────────────────────┘
+                               │ read by ocs_python_repl/build.rs
+                               ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ crud_manifest.json                                                          │
+│   type_filter  -> central allow-list of entity kinds exposed to Python      │
+│   base_fields  -> EntityCommon fields promoted to base Entity class         │
+│   overrides    -> constructors, renames, flattens, defaults, custom Rust      │
+│   manual_overrides -> entities still requiring hand-written code              │
+└──────────────────────────────┬──────────────────────────────────────────────┘
+                               │
+              ┌────────────────┴────────────────┐
+              ▼                                 ▼
+┌─────────────────────────────┐     ┌─────────────────────────────────────────┐
+│ build/generate.rs           │     │ OUT_DIR/python/ocs/                     │
+│   Python dataclass generator│────▶│   entities.py                           │
+│   Python stub generator     │     │   entities.pyi                          │
+│   Rust CRUD generator       │────▶│ OUT_DIR/entity_crud.rs                  │
+└─────────────────────────────┘     │   (included by src/python_ext.rs)       │
+                                    └─────────────────────────────────────────┘
+```
+
+Cargo builds `ocs_plugin_api` first, so the registry JSON is already on disk
+when `ocs_python_repl/build.rs` runs. The generator resolves each entity's
+fields by combining the registry `TypeInfo` with any manifest override. Fields
+not mentioned in `overrides` are emitted automatically with a registry-derived
+Python type, default value, and Rust getter/setter.
+
+### `crud_manifest.json` override mechanism
+
+Only provide overrides when the public API must differ from the raw registry:
+
+| Override | Purpose | Example |
+|---|---|---|
+| `constructor` | How to construct the Rust struct before field assignment. | `Point` uses `from_coords(x, y, z)`. |
+| `python_name` | Expose a registry field under a different Python name. | `MText.value` is exposed as `text`. |
+| `python_type` / `default` | Change the public Python type or default literal. | `Polyline.normal` defaults to `(0.0, 0.0, 1.0)`. |
+| `flatten` | Expand a struct field into several Python fields. | `Spline.flags` becomes `closed`, `periodic`, `rational`, `planar`, `linear`. |
+| `rust_getter` / `rust_setter` | Custom Rust expressions when the registry cannot express the conversion. | `Polyline.vertices` is exposed as `points: List[Tuple[float, float, float]]`. |
+| `exclude` | Omit a registry field from the public API. | (rare; use only for internal-only data) |
+
+#### Example overrides
+
+**Point** — flatten `location` into `x`, `y`, `z` and use the `from_coords`
+constructor:
+
+```json
+{
+  "type_filter": ["Point"],
+  "overrides": {
+    "Point": {
+      "constructor": { "kind": "from_coords", "args": ["x", "y", "z"] },
+      "fields": {
+        "location": { "flatten": ["x", "y", "z"], "default": "(0.0, 0.0, 0.0)" },
+        "normal": { "default": "(0.0, 0.0, 1.0)" }
+      }
+    }
+  }
+}
+```
+
+**Polyline** — expose `vertices` as the user-friendly `points` list and expose
+`flags` as the boolean `closed` field:
+
+```json
+{
+  "overrides": {
+    "Polyline": {
+      "constructor": { "kind": "default" },
+      "fields": {
+        "vertices": {
+          "python_name": "points",
+          "python_type": "List[Tuple[float, float, float]]",
+          "default": "[]",
+          "rust_getter": "p.vertices.iter().map(|v| v3_tuple(&v.location)).collect::<Vec<_>>()",
+          "rust_setter": "if let Some(pts) = entity_attr(entity, \"points\") { p.vertices = point_list(&pts)?.into_iter().map(acadrust::entities::Vertex3D::new).collect(); }"
+        },
+        "flags": {
+          "python_name": "closed",
+          "python_type": "bool",
+          "default": "False",
+          "rust_getter": "p.flags.is_closed()",
+          "rust_setter": "p.flags.set_closed(get_opt_bool(entity, \"closed\", false));"
+        }
+      }
+    }
+  }
+}
+```
+
+**Spline** — flatten the `SplineFlags` struct into individual boolean fields
+with no custom Rust code:
+
+```json
+{
+  "overrides": {
+    "Spline": {
+      "constructor": { "kind": "default" },
+      "fields": {
+        "flags": { "flatten": ["closed", "periodic", "rational", "planar", "linear"] }
+      }
+    }
+  }
+}
+```
+
+The generated files are copied into each session directory at runtime.
+
 ## Installation
 
 The plugin is a standalone Rust workspace under `crates/ocs_python_repl`.
@@ -89,10 +213,12 @@ from ocs.entities import Point
 
 print(ocs.doc.counts())
 p = Point(x=10, y=20, z=0)
-ocs.doc.add({"kind": "Point", **p.__dict__})
+ocs.doc.add(p)
 ```
 
-Use `ocs.doc.refresh()` to re-read the snapshot after the host updates it.
+`add`, `update`, and `add_many` accept either a generated dataclass instance or
+an equivalent dict with a `kind` key. Use `ocs.doc.refresh()` to re-read the
+snapshot after the host updates it.
 
 ## Examples
 
@@ -107,6 +233,25 @@ More example scripts are in [`assets/examples/python_repl`](assets/examples/pyth
 - `05_advanced_entities.py` — create Ellipse, Polyline2D, Polyline3D, and use
   Vector3, Color, Layer, and XDataValue.
 
+### Generate 100 random points
+
+```python
+import random
+from ocs.entities import Point
+
+random.seed(42)
+points = [
+    Point(
+        x=random.uniform(-50.0, 50.0),
+        y=random.uniform(-50.0, 50.0),
+        z=0.0,
+    )
+    for _ in range(100)
+]
+handles = ocs.doc.add_many(points)
+print(f"Added {len(handles)} points")
+```
+
 ### Add 1000 random points
 
 ```python
@@ -116,11 +261,11 @@ from ocs.entities import Point
 
 random.seed(42)
 points = [
-    {"kind": "Point", **Point(
+    Point(
         x=random.uniform(-100.0, 100.0),
         y=random.uniform(-100.0, 100.0),
         z=0.0,
-    ).__dict__}
+    )
     for _ in range(1000)
 ]
 ocs.doc.add_many(points)
@@ -133,25 +278,25 @@ print(ocs.doc.counts())
 
 ### Update and remove entities
 
-`ocs.doc.update(entity_dict)` replaces the entity whose `handle` matches the
-dictionary. `ocs.doc.remove(handle)` deletes it.
+`ocs.doc.update(entity)` replaces the entity whose `handle` matches.
+`ocs.doc.remove(handle)` deletes it.
 
 ```python
 from ocs.entities import Point, Circle
 
 # Create two entities.
-h1 = ocs.doc.add({"kind": "Point", **Point(x=10.0, y=10.0, z=0.0).__dict__})
-h2 = ocs.doc.add({"kind": "Circle", **Circle(center=(50.0, 50.0, 0.0), radius=10.0).__dict__})
+h1 = ocs.doc.add(Point(x=10.0, y=10.0, z=0.0))
+h2 = ocs.doc.add(Circle(center=(50.0, 50.0, 0.0), radius=10.0))
 
 # Move the point (keep the same handle).
 p = Point(x=30.0, y=30.0, z=0.0)
 p.handle = h1
-ocs.doc.update({"kind": "Point", **p.__dict__})
+ocs.doc.update(p)
 
 # Change the circle radius.
 c = Circle(center=(50.0, 50.0, 0.0), radius=25.0)
 c.handle = h2
-ocs.doc.update({"kind": "Circle", **c.__dict__})
+ocs.doc.update(c)
 
 # Remove the point.
 ocs.doc.remove(h1)
@@ -161,6 +306,20 @@ time.sleep(0.2)
 ocs.doc.refresh()
 print(ocs.doc.counts())
 ```
+
+### Dict-based equivalent
+
+For callers that prefer plain dictionaries, pass a dict with `kind` and the
+field names from the generated dataclass:
+
+```python
+ocs.doc.add({"kind": "Point", "x": 10.0, "y": 10.0, "z": 0.0})
+ocs.doc.update({"kind": "Point", "handle": h1, "x": 30.0, "y": 30.0, "z": 0.0})
+```
+
+When passing a dict, the `kind` key must match an entity class name (e.g.
+`"Point"`, `"Circle"`). When passing a dataclass, the class name is used
+automatically.
 
 ### Add 10000 random points with performance measurement
 
@@ -176,11 +335,11 @@ from ocs.entities import Point
 N = 10000
 random.seed(42)
 points = [
-    {"kind": "Point", **Point(
+    Point(
         x=random.uniform(-1000.0, 1000.0),
         y=random.uniform(-1000.0, 1000.0),
         z=0.0,
-    ).__dict__}
+    )
     for _ in range(N)
 ]
 
@@ -236,6 +395,7 @@ Each `PYTHONSHELL` session creates a temp directory such as
 - `repl_wrapper.py` — platform wrapper that launches the terminal/IPython.
 - `startup.py` — bootstraps `ocs.doc`, registers `%pyimport` / `%pyexport`.
 - `ocs/` — Python package with `_ocs` extension wrapper, entity classes, and stubs.
+  `ocs/entities.py` and `ocs/entities.pyi` are generated at build time.
 - `py.typed` — PEP 561 marker for typing tools.
 
 The compiled `_ocs` extension is **not** copied into the session dir. It is
@@ -244,3 +404,62 @@ imports `ocs_python_repl` as `_ocs`).
 
 These directories are removed when the document tab closes or when
 OpenCADStudio shuts down.
+
+## Adding or customizing entity bindings
+
+The registry in `ocs_plugin_api` is the single source of truth for field types.
+The Python/Rust binding for each entity kind is generated from `crud_manifest.json`
+in this crate. To add a new entity kind or override an existing one:
+
+1. Make sure the type is traced by the `ocs_plugin_api` allow-list in
+   `crates/ocs_plugin_api/build.rs` (add an `("MyEntity", trace::<acadrust::MyEntity>)`
+   entry). If the entity contains enums that `serde-reflection` has not seen,
+   add sample values in `add_enum_samples`.
+
+2. Add the entity to `crud_manifest.json` under `type_filter` and, only if the
+   public API needs to differ from the registry, add an entry under `overrides`:
+
+   ```json
+   {
+     "type_filter": ["Point", "MyEntity"],
+     "overrides": {
+       "MyEntity": {
+         "constructor": { "kind": "new" },
+         "fields": {
+           "center": { "default": "(0.0, 0.0, 0.0)" }
+         }
+       }
+     }
+   }
+   ```
+
+   The generator derives each field's Python type and Rust getter/setter from
+   the registry. Only supply overrides for:
+
+   - `constructor` — `new`, `default`, or `from_coords` (with `args`).
+   - `python_name` — expose a registry field under a different Python name.
+   - `python_type` / `default` — change the public type or default literal.
+   - `flatten` — expand a struct field (e.g. `SplineFlags`) into individual
+     Python fields.
+   - `rust_getter` / `rust_setter` — custom Rust expressions for fields where
+     the registry cannot express the conversion (e.g. bitflags, vertex lists
+     exposed as plain point tuples).
+
+3. If the entity cannot be fully described by the manifest/registry and needs
+   hand-written Rust or Python code, add an entry to the `manual_overrides`
+   section explaining why and how to maintain it, and add the required helpers
+   to `src/python_ext.rs`:
+
+   ```json
+   "manual_overrides": {
+     "MyEntity": "MyEntity uses a custom bitflags struct for style flags that is not yet in the registry. Provide a custom rust_setter for the style field and a helper in python_ext.rs until the registry covers it."
+   }
+   ```
+
+4. Rebuild the plugin and run the tests. Round-trip tests for every entity kind
+   are in `python_ext.rs`; add a new test case following the existing pattern if
+   you want to assert entity-specific invariants.
+
+   ```powershell
+   cargo test -p ocs_python_repl --manifest-path crates/ocs_python_repl/Cargo.toml
+   ```

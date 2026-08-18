@@ -25,11 +25,13 @@ different working directory, use the absolute path instead.
 | `03_batch_points.py` | Add thousands of points efficiently with `add_many`. |
 | `04_query_entities.py` | Refresh the snapshot and query counts/entities/layers. |
 | `05_advanced_entities.py` | Create Ellipse, Polyline2D, Polyline3D, and use Vector3/Color/Layer/XDataValue. |
+| `06_random_points_100.py` | Add exactly 100 random points in a 100 x 100 area. |
 
 ## Supported entity operations
 
-- **Create/update:** `ocs.doc.add(entity_dict)`, `ocs.doc.add_many([...])`, and
-  `ocs.doc.update(entity_dict)` support:
+- **Create/update:** `ocs.doc.add(entity)`, `ocs.doc.add_many([...])`, and
+  `ocs.doc.update(entity)` accept generated dataclass instances or plain
+  dictionaries with a `kind` key. Supported kinds:
 
   `Point`, `Line`, `Circle`, `Arc`, `Ellipse`, `Polyline`, `Polyline2D`,
   `Polyline3D`, `LwPolyline`, `Spline`, `MText`.

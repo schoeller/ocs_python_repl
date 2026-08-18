@@ -1,0 +1,115 @@
+{
+  "type_filter": [
+    "Point",
+    "Line",
+    "Circle",
+    "Arc",
+    "Ellipse",
+    "Polyline",
+    "Polyline2D",
+    "Polyline3D",
+    "LwPolyline",
+    "Spline",
+    "MText"
+  ],
+  "base_fields": ["handle", "layer"],
+  "overrides": {
+    "Point": {
+      "constructor": { "kind": "from_coords", "args": ["x", "y", "z"] },
+      "fields": {
+        "location": { "flatten": ["x", "y", "z"], "default": "(0.0, 0.0, 0.0)" },
+        "normal": { "default": "(0.0, 0.0, 1.0)" }
+      }
+    },
+    "Line": { "constructor": { "kind": "new" } },
+    "Circle": { "constructor": { "kind": "new" } },
+    "Arc": { "constructor": { "kind": "new" } },
+    "Ellipse": { "constructor": { "kind": "default" } },
+    "Polyline": {
+      "constructor": { "kind": "default" },
+      "fields": {
+        "vertices": {
+          "python_name": "points",
+          "python_type": "List[Tuple[float, float, float]]",
+          "default": "[]",
+          "rust_getter": "p.vertices.iter().map(|v| v3_tuple(&v.location)).collect::<Vec<_>>()",
+          "rust_setter": "if let Some(pts) = entity_attr(entity, \"points\") { p.vertices = point_list(&pts)?.into_iter().map(acadrust::entities::Vertex3D::new).collect(); }"
+        },
+        "flags": {
+          "python_name": "closed",
+          "python_type": "bool",
+          "default": "False",
+          "rust_getter": "p.flags.is_closed()",
+          "rust_setter": "p.flags.set_closed(get_opt_bool(entity, \"closed\", false));"
+        }
+      }
+    },
+    "Polyline2D": {
+      "constructor": { "kind": "default" },
+      "fields": {
+        "vertices": {
+          "python_name": "points",
+          "python_type": "List[Tuple[float, float]]",
+          "default": "[]",
+          "rust_getter": "p.vertices.iter().map(|v| (v.location.x, v.location.y)).collect::<Vec<_>>()",
+          "rust_setter": "if let Some(pts) = entity_attr(entity, \"points\") { p.vertices = point_list_2d(&pts)?.into_iter().map(|v| acadrust::entities::Vertex2D::new(acadrust::types::Vector3::new(v.x, v.y, 0.0))).collect(); }"
+        },
+        "flags": {
+          "python_name": "closed",
+          "python_type": "bool",
+          "default": "False",
+          "rust_getter": "p.flags.is_closed()",
+          "rust_setter": "p.flags.set_closed(get_opt_bool(entity, \"closed\", false));"
+        }
+      }
+    },
+    "Polyline3D": {
+      "constructor": { "kind": "default" },
+      "fields": {
+        "vertices": {
+          "python_name": "points",
+          "python_type": "List[Tuple[float, float, float]]",
+          "default": "[]",
+          "rust_getter": "p.vertices.iter().map(|v| v3_tuple(&v.position)).collect::<Vec<_>>()",
+          "rust_setter": "if let Some(pts) = entity_attr(entity, \"points\") { p.vertices = point_list(&pts)?.into_iter().map(acadrust::entities::Vertex3DPolyline::new).collect(); }"
+        },
+        "smooth_type": {
+          "python_type": "str",
+          "default": "\"None\"",
+          "rust_getter": "smooth_surface_name_3d(&p.smooth_type)",
+          "rust_setter": "p.smooth_type = smooth_surface_type_3d(entity, \"smooth_type\");"
+        }
+      }
+    },
+    "LwPolyline": {
+      "constructor": { "kind": "new" },
+      "fields": {
+        "vertices": {
+          "python_name": "points",
+          "python_type": "List[Tuple[float, float]]",
+          "default": "[]",
+          "rust_getter": "p.vertices.iter().map(|v| (v.location.x, v.location.y)).collect::<Vec<_>>()",
+          "rust_setter": "if let Some(pts) = entity_attr(entity, \"points\") { p.vertices = point_list_2d(&pts)?.into_iter().map(acadrust::entities::LwVertex::new).collect(); }"
+        },
+        "normal": { "default": "(0.0, 0.0, 1.0)" }
+      }
+    },
+    "Spline": {
+      "constructor": { "kind": "default" },
+      "fields": {
+        "flags": {
+          "flatten": ["closed", "periodic", "rational", "planar", "linear"]
+        }
+      }
+    },
+    "MText": {
+      "constructor": { "kind": "new" },
+      "fields": {
+        "value": { "python_name": "text" },
+        "insertion_point": { "python_name": "insertion" },
+        "normal": { "default": "(0.0, 0.0, 1.0)" }
+      }
+    }
+  },
+  "manual_overrides": {}
+}

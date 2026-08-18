@@ -15,6 +15,7 @@ use ocs_plugin_api::manifest::PluginManifest;
 use ocs_plugin_api::ribbon::{CadModule, IconKind, ModuleEvent, RibbonGroup, RibbonItem, ToolDef};
 use pyo3::prelude::*;
 
+pub mod alloc;
 pub mod document;
 pub mod platform;
 mod python_ext;
@@ -40,13 +41,16 @@ struct PythonReplPlugin {
 
 impl PythonReplPlugin {
     fn new() -> Self {
+        crate::document::debug_log("PythonReplPlugin::new");
         Self {
             sessions: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
     fn ensure_session(&self, host: &mut dyn HostApi) {
+        crate::document::debug_log("PythonReplPlugin::ensure_session start");
         let tab_id = host.tab_id();
+        crate::document::debug_log(&format!("PythonReplPlugin::ensure_session tab_id={tab_id}"));
         let sessions = self.sessions.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(cell) = sessions.get(&tab_id) {
             if cell.borrow_mut().is_alive() {
@@ -57,13 +61,16 @@ impl PythonReplPlugin {
         drop(sessions);
 
         eprintln!("[python-repl] spawning session for tab {tab_id}");
+        crate::document::debug_log("PythonReplPlugin::ensure_session about to spawn");
         match ReplSession::spawn(host, tab_id) {
             Ok(session) => {
+                crate::document::debug_log("PythonReplPlugin::ensure_session spawned OK");
                 host.push_info("Python REPL started.");
                 self.sessions
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
                     .insert(tab_id, RefCell::new(session));
+                crate::document::debug_log("PythonReplPlugin::ensure_session inserted session");
             }
             Err(e) => {
                 let msg = format!("failed to start Python REPL: {e}");
@@ -71,6 +78,7 @@ impl PythonReplPlugin {
                 host.push_error(&msg);
             }
         }
+        crate::document::debug_log("PythonReplPlugin::ensure_session end");
     }
 }
 
@@ -220,7 +228,7 @@ mod tests {
         let dir = SessionDir::create(5555).unwrap();
         let entities = std::fs::read_to_string(dir.root().join("ocs/entities.py")).unwrap();
         assert!(entities.contains("class Point(Entity)"));
-        assert!(entities.contains("KIND_MAP"));
+        assert!(entities.contains("@dataclass"));
         let startup = std::fs::read_to_string(dir.root().join("startup.py")).unwrap();
         assert!(startup.contains("def pyimport"));
         assert!(startup.contains("def pyexport"));
@@ -228,7 +236,6 @@ mod tests {
         assert!(wrapper.contains("IPython"));
         std::fs::read_to_string(dir.root().join("ocs/entities.pyi")).unwrap();
         std::fs::read_to_string(dir.root().join("ocs/__init__.pyi")).unwrap();
-        std::fs::read_to_string(dir.root().join("ocs/_ocs.pyi")).unwrap();
         std::fs::read(dir.root().join("py.typed")).unwrap();
         dir.delete().unwrap();
     }

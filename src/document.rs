@@ -6,6 +6,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use acadrust::{EntityType, Handle};
+use bincode::Options;
 use ocs_plugin_api::host::PluginRequestError;
 use ocs_plugin_api::ipc::protocol::{PluginRequest, PluginResponse};
 use ocs_plugin_api::ipc::proxy::{ProxyPluginRequestSender, PROXY_TOKEN_LEN};
@@ -14,6 +15,20 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use crate::python_ext::{entity_to_py, py_to_entity, py_to_xdata_record, xdata_record_to_py};
+
+/// Append a diagnostic line to a fixed temp log file and flush it immediately.
+/// This survives OOM aborts of the process better than stderr buffering.
+pub fn debug_log(msg: &str) {
+    use std::io::Write;
+    let path = std::env::temp_dir().join("ocs_repl_debug.log");
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        let _ = writeln!(f, "{} {msg}", std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis().to_string())
+            .unwrap_or_else(|_| "?".to_string()));
+        let _ = f.flush();
+    }
+}
 
 fn parse_token(s: String) -> Option<[u8; PROXY_TOKEN_LEN]> {
     if s.len() != 2 * PROXY_TOKEN_LEN {
@@ -24,6 +39,21 @@ fn parse_token(s: String) -> Option<[u8; PROXY_TOKEN_LEN]> {
         out[i] = u8::from_str_radix(std::str::from_utf8(chunk).ok()?, 16).ok()?;
     }
     Some(out)
+}
+
+/// Deserialize a bincode-encoded entity with a byte limit so a corrupted
+/// internal length cannot allocate an unbounded amount of memory.
+///
+/// IMPORTANT: `EntityViewV4::from` in the host serializes entities with
+/// `bincode::serialize`, which uses **fixed-width** integer encoding. The
+/// default `DefaultOptions::new()` uses variable-width (varint) encoding, so
+/// we must explicitly request fixed-width decoding or the fields will be
+/// misread.
+fn deserialize_entity(data: &[u8]) -> bincode::Result<EntityType> {
+    bincode::DefaultOptions::new()
+        .with_fixint_encoding()
+        .with_limit(data.len() as u64)
+        .deserialize(data)
 }
 
 /// Per-tab document handle exposed to Python as `ocs.doc`.
@@ -51,8 +81,22 @@ impl Document {
     #[new]
     #[pyo3(signature = (snapshot_path))]
     pub fn new(snapshot_path: String) -> PyResult<Self> {
+        debug_log(&format!(
+            "[python-repl] Document::new opening snapshot: {} (size {:?})",
+            snapshot_path,
+            std::fs::metadata(&snapshot_path).map(|m| m.len()).ok()
+        ));
         let reader = SharedDocumentReader::<DocumentViewDataV4>::open(Path::new(&snapshot_path))
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+
+        // Probe the rkyv payload once during construction. If validation itself
+        // triggers an OOM, this log will show it.
+        if reader.payload().is_some() {
+            debug_log("[python-repl] Document::new initial rkyv payload OK");
+        } else {
+            debug_log("[python-repl] Document::new initial rkyv payload None (host not yet published)");
+        }
+
         let proxy = match std::env::var("OCS_REQUEST_PORT")
             .ok()
             .and_then(|s| s.parse::<u16>().ok())
@@ -69,17 +113,25 @@ impl Document {
                 let result =
                     ProxyPluginRequestSender::connect_with_token("127.0.0.1", port, &token);
                 if let Err(ref e) = result {
-                    eprintln!("[python-repl] request proxy connect failed: {e}");
+                    debug_log(&format!("[python-repl] request proxy connect failed: {e}"));
+                } else {
+                    debug_log("[python-repl] request proxy connected");
                 }
                 result.ok()
             }
-            None => None,
+            None => {
+                debug_log("[python-repl] no OCS_REQUEST_PORT, running read-only");
+                None
+            }
         };
-        Ok(Self {
+        debug_log("[python-repl] Document::new constructing Self");
+        let doc = Self {
             reader: Mutex::new(reader),
             proxy: proxy.map(Arc::new),
             handle_index: Mutex::new(HashMap::new()),
-        })
+        };
+        debug_log("[python-repl] Document::new returning");
+        Ok(doc)
     }
 
     /// Refresh the cached snapshot version if the host has published a newer one.
@@ -113,11 +165,21 @@ impl Document {
         let archived = reader.payload().ok_or_else(|| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("no archived document")
         })?;
+        debug_log(&format!(
+            "[python-repl] entities(): count={} total_data={}",
+            archived.entities.len(),
+            archived.entities.iter().map(|e| e.data.len()).sum::<usize>()
+        ));
         archived
             .entities
             .iter()
-            .map(|e| {
-                let entity: EntityType = bincode::deserialize(&e.data).map_err(|e| {
+            .enumerate()
+            .map(|(i, e)| {
+                debug_log(&format!(
+                    "[python-repl] entities[{i}]: handle={} data_len={}",
+                    e.handle, e.data.len()
+                ));
+                let entity: EntityType = deserialize_entity(&e.data).map_err(|e| {
                     PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
                 })?;
                 entity_to_py(py, &entity, e.handle)
@@ -141,7 +203,11 @@ impl Document {
             return Ok(None);
         };
         let e = &archived.entities[idx];
-        let entity: EntityType = bincode::deserialize(&e.data)
+        debug_log(&format!(
+            "[python-repl] entity(): handle={} data_len={}",
+            e.handle, e.data.len()
+        ));
+        let entity: EntityType = deserialize_entity(&e.data)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
         Ok(Some(entity_to_py(py, &entity, e.handle)?))
     }
@@ -170,28 +236,55 @@ impl Document {
         let archived = reader.payload().ok_or_else(|| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("no archived document")
         })?;
+        debug_log(&format!("[python-repl] counts(): count={}", archived.entities.len()));
+        let mut failures = 0usize;
         for e in archived.entities.iter() {
-            let entity: EntityType = bincode::deserialize(&e.data)
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-            let name = match entity {
-                EntityType::Point(_) => "Point",
-                EntityType::Line(_) => "Line",
-                EntityType::Circle(_) => "Circle",
-                EntityType::Arc(_) => "Arc",
-                EntityType::Polyline(_) => "Polyline",
-                EntityType::Polyline2D(_) => "Polyline2D",
-                EntityType::Polyline3D(_) => "Polyline3D",
-                EntityType::LwPolyline(_) => "LwPolyline",
-                EntityType::Spline(_) => "Spline",
-                EntityType::MText(_) => "MText",
-                _ => "Other",
-            };
-            *counts.entry(name.to_string()).or_insert(0) += 1;
+            match deserialize_entity(&e.data) {
+                Ok(entity) => {
+                    let name = match entity {
+                        EntityType::Point(_) => "Point",
+                        EntityType::Line(_) => "Line",
+                        EntityType::Circle(_) => "Circle",
+                        EntityType::Arc(_) => "Arc",
+                        EntityType::Polyline(_) => "Polyline",
+                        EntityType::Polyline2D(_) => "Polyline2D",
+                        EntityType::Polyline3D(_) => "Polyline3D",
+                        EntityType::LwPolyline(_) => "LwPolyline",
+                        EntityType::Spline(_) => "Spline",
+                        EntityType::MText(_) => "MText",
+                        _ => "Other",
+                    };
+                    *counts.entry(name.to_string()).or_insert(0) += 1;
+                }
+                Err(err) => {
+                    failures += 1;
+                    if failures <= 5 {
+                        let preview: String = e
+                            .data
+                            .iter()
+                            .take(32)
+                            .map(|b| format!("{:02x}", b))
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                        debug_log(&format!(
+                            "[python-repl] counts(): deserialize error handle={} len={} err={} preview={}",
+                            e.handle,
+                            e.data.len(),
+                            err,
+                            preview
+                        ));
+                    }
+                }
+            }
         }
+        debug_log(&format!(
+            "[python-repl] counts(): finished with {} failures",
+            failures
+        ));
         Ok(counts)
     }
 
-    fn add<'py>(&self, py: Python<'py>, entity: &Bound<'py, PyDict>) -> PyResult<u64> {
+    fn add<'py>(&self, py: Python<'py>, entity: &Bound<'py, PyAny>) -> PyResult<u64> {
         let entity = py_to_entity(entity)?;
         let sender = require_sender(self)?;
         let interrupt: RefCell<Option<PyErr>> = RefCell::new(None);
@@ -225,15 +318,20 @@ impl Document {
     ) -> PyResult<Vec<u64>> {
         let entities: Vec<EntityType> = entities
             .iter()
-            .map(|item| {
-                let dict = item.downcast::<PyDict>().map_err(|_| {
-                    PyErr::new::<pyo3::exceptions::PyTypeError, _>(
-                        "add_many expects a list of entity dicts",
-                    )
-                })?;
-                py_to_entity(dict)
-            })
+            .map(|item| py_to_entity(&item))
             .collect::<PyResult<_>>()?;
+        debug_log(&format!(
+            "[python-repl] add_many: parsed {} entities",
+            entities.len()
+        ));
+        if let Some(first) = entities.first() {
+            let sample =
+                bincode::serialize(first).unwrap_or_default();
+            debug_log(&format!(
+                "[python-repl] add_many: first entity serialized size={}",
+                sample.len()
+            ));
+        }
         let sender = require_sender(self)?;
         let interrupt: RefCell<Option<PyErr>> = RefCell::new(None);
         let result = sender.request_with_poll(PluginRequest::AddEntities(entities), &mut || {
@@ -261,7 +359,7 @@ impl Document {
         }
     }
 
-    fn update<'py>(&self, py: Python<'py>, entity: &Bound<'py, PyDict>) -> PyResult<bool> {
+    fn update<'py>(&self, py: Python<'py>, entity: &Bound<'py, PyAny>) -> PyResult<bool> {
         let entity = py_to_entity(entity)?;
         let sender = require_sender(self)?;
         let interrupt: RefCell<Option<PyErr>> = RefCell::new(None);

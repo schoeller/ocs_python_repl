@@ -16,11 +16,11 @@ from ocs.entities import Point
 N = 5000
 random.seed(42)
 points = [
-    {"kind": "Point", **Point(
+    Point(
         x=random.uniform(-500.0, 500.0),
         y=random.uniform(-500.0, 500.0),
         z=0.0,
-    ).__dict__}
+    )
     for _ in range(N)
 ]
 
