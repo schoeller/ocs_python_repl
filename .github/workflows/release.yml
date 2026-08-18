@@ -4,10 +4,23 @@ name: release
 # the binaries plus plugin.toml to a GitHub Release when a v* tag is pushed.
 # Open CAD Studio's Plugin Manager reads the release assets, picks the one
 # matching the user's OS/arch, and installs it.
+#
+# Two entry points:
+#
+#   push (v* tag)  — a human tagged by hand.
+#   workflow_call  — an automated caller (e.g. a repin bot) can invoke this
+#                    workflow directly, because tags pushed by GITHUB_TOKEN do
+#                    not fire push triggers.
 
 on:
   push:
     tags: ["v*"]
+  workflow_call:
+    inputs:
+      tag:
+        description: "Tag to build and publish (e.g. v0.1.0). Must already exist."
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -30,10 +43,32 @@ jobs:
 
     runs-on: ${{ matrix.os }}
 
+    env:
+      # `inputs` is unset on the push path, so this resolves to the pushed tag.
+      TAG: ${{ inputs.tag || github.ref_name }}
+
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
 
       - uses: dtolnay/rust-toolchain@stable
+
+      # A release whose tag disagrees with the manifests ships a plugin that
+      # reports the wrong version to the Plugin Manager. Catch it before the
+      # assets are built.
+      - name: Check tag matches the declared plugin version
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${TAG#v}"
+          cargo_ver=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
+          plugin_ver=$(grep -m1 '^version = ' plugin.toml | cut -d'"' -f2)
+          echo "tag=$tag  Cargo.toml=$cargo_ver  plugin.toml=$plugin_ver"
+          if [ "$tag" != "$cargo_ver" ] || [ "$tag" != "$plugin_ver" ]; then
+            echo "::error::tag v$tag disagrees with Cargo.toml ($cargo_ver) / plugin.toml ($plugin_ver)"
+            exit 1
+          fi
 
       - name: Set up Python
         uses: actions/setup-python@v5
