@@ -50,18 +50,29 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           DRY_RUN: ${{ inputs.dry_run }}
+          INPUT_TAG: ${{ inputs.tag }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
 
-          TAG="${{ inputs.tag }}"
-          if [ -z "$TAG" ]; then
-            TAG=$(cat .upstream-tag | tr -d '[:space:]')
+          CURRENT_TAG=$(cat .upstream-tag | tr -d '[:space:]')
+
+          if [ -n "$INPUT_TAG" ]; then
+            # Manual workflow_dispatch override.
+            TAG="$INPUT_TAG"
+            echo "using workflow_dispatch tag=$TAG"
+          elif [ "$EVENT_NAME" = "schedule" ]; then
+            # Nightly poll: compare the latest upstream release to our pin.
+            TAG=$(gh api "repos/$UPSTREAM/releases/latest" --jq .tag_name)
+            echo "cron poll: latest upstream release=$TAG; current pin=$CURRENT_TAG"
+          else
+            # Fallback: re-pin to the current .upstream-tag value (useful for dry runs).
+            TAG="$CURRENT_TAG"
+            echo "fallback: using current .upstream-tag=$TAG"
           fi
 
           # Validate the tag exists upstream and resolve its commit SHA.
           SHA=$(gh api "repos/$UPSTREAM/commits/$TAG" --jq .sha)
-
-          CURRENT_TAG=$(grep -oP '^tag = "\K[^"]+' .upstream-tag || true)
           echo "desired upstream tag=$TAG ($SHA); current pinned tag=$CURRENT_TAG"
 
           if [ "$TAG" = "$CURRENT_TAG" ] && [ "$DRY_RUN" != "true" ]; then
