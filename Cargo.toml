@@ -17,33 +17,36 @@ default = []
 # This is useful for debugging OOM aborts but adds overhead to every allocation.
 alloc-debug = []
 
+# The upstream Open CAD Studio tag this plugin is pinned to.
+# The repin workflow reads this file, fetches the upstream Cargo.lock at that
+# tag, and rewrites the dependency pins below. Do not edit the dependency lines
+# by hand; run `scripts/repin.py` (or the `repin` GitHub Actions workflow).
+[package.metadata.upstream]
+tag = "v0.9.6"
+
 [dependencies]
-# Standalone plugin builds pull the host contract from the upstream
-# OpenCADStudio repo. If you need custom entity types (e.g. the MText changes
-# in the local monorepo), push them to your fork and update this URL/rev, or
-# use a `.cargo/config.toml` patch for local development.
-ocs_plugin_api = { git = "https://github.com/schoeller/OpenCADStudio", branch = "main", features = ["host"] }
-acadrust = { git = "https://github.com/HakanSeven12/cadcodec.git", rev = "931c4ab", features = ["serde"] }
+ocs_plugin_api = { git = "https://github.com/HakanSeven12/OpenCADStudio", tag = "v0.9.6", features = ["host"] }
+acadrust = { git = "https://github.com/HakanSeven12/cadcodec.git", rev = "931c4ab0c590b755e280bed318a35f41c57b139f", features = ["serde"] }
 pyo3 = { version = "0.23", features = ["extension-module", "abi3-py38"] }
 serde = { version = "=1.0.228", features = ["derive"] }
-serde_json = "1"
-bincode = "1"
-memmap2 = "0.9"
-anyhow = "1"
+serde_json = { version = "=1.0.150" }
+bincode = { version = "=1.3.3" }
+memmap2 = { version = "=0.9.11" }
+anyhow = { version = "=1.0.103" }
 which = "7"
-getrandom = "0.2"
+getrandom = { version = "=0.3.4" }
 
 [target.'cfg(unix)'.dependencies]
-libc = "0.2"
+libc = { version = "=0.2.186" }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_System_Diagnostics", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Console"] }
+windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_System_Diagnostics", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Console"] }
 
 [build-dependencies]
 # Must stay in sync with the runtime dependency above.
-ocs_plugin_api = { git = "https://github.com/schoeller/OpenCADStudio", branch = "main", features = ["host"] }
+ocs_plugin_api = { git = "https://github.com/HakanSeven12/OpenCADStudio", tag = "v0.9.6", features = ["host"] }
 serde = { version = "=1.0.228", features = ["derive"] }
-serde_json = "1"
+serde_json = { version = "=1.0.150" }
 # PyO3's extension-module feature intentionally does not link libpython on Unix.
 # This helper emits the macOS linker flags needed to allow unresolved Python
 # symbols to be resolved at load time.

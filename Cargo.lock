@@ -26,6 +26,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "acadrust"
+version = "0.4.1"
+source = "git+https://github.com/HakanSeven12/cadcodec.git?rev=931c4ab0c590b755e280bed318a35f41c57b139f#931c4ab0c590b755e280bed318a35f41c57b139f"
+dependencies = [
+ "ahash 0.8.12",
+ "anyhow",
+ "bitflags",
+ "byteorder",
+ "encoding_rs",
+ "flate2",
+ "indexmap",
+ "itoa",
+ "memmap2",
+ "nom",
+ "once_cell",
+ "rayon",
+ "ryu",
+ "serde",
+ "thiserror",
+ "web-time",
+]
+
+[[package]]
 name = "adler2"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -58,9 +81,9 @@ dependencies = [
 
 [[package]]
 name = "anyhow"
-version = "1.0.104"
+version = "1.0.103"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
+checksum = "2a4385e2e34eb35d6b3efe798b9eb88096925d87726c0798709bf56d9ed84af3"
 
 [[package]]
 name = "autocfg"
@@ -503,9 +526,9 @@ dependencies = [
 
 [[package]]
 name = "libc"
-version = "0.2.189"
+version = "0.2.186"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
+checksum = "68ab91017fe16c622486840e4c83c9a37afeff978bd239b5293d61ece587de66"
 
 [[package]]
 name = "libloading"
@@ -582,9 +605,9 @@ dependencies = [
 [[package]]
 name = "ocs_plugin_api"
 version = "0.2.0"
-source = "git+https://github.com/schoeller/OpenCADStudio?branch=main#f9c3546551fc578cfa6934adc29cff51a96fa3ba"
+source = "git+https://github.com/HakanSeven12/OpenCADStudio?tag=v0.9.6#2d2ea97613831fbc90f7533bfaaa7516ee745190"
 dependencies = [
- "acadrust",
+ "acadrust 0.4.1 (git+https://github.com/HakanSeven12/cadcodec.git?rev=931c4ab)",
  "bincode",
  "cargo-lock",
  "getrandom 0.2.17",
@@ -602,10 +625,10 @@ dependencies = [
 name = "ocs_python_repl"
 version = "0.1.5"
 dependencies = [
- "acadrust",
+ "acadrust 0.4.1 (git+https://github.com/HakanSeven12/cadcodec.git?rev=931c4ab0c590b755e280bed318a35f41c57b139f)",
  "anyhow",
  "bincode",
- "getrandom 0.2.17",
+ "getrandom 0.3.4",
  "libc",
  "memmap2",
  "ocs_plugin_api",
@@ -914,9 +937,9 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.151"
+version = "1.0.150"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14"
+checksum = "e8014e44b4736ed0538adeecded0fce2a272f22dc9578a7eb6b2d9993c74cfb9"
 dependencies = [
  "itoa",
  "memchr",
