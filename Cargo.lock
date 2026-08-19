@@ -582,6 +582,7 @@ dependencies = [
 [[package]]
 name = "ocs_plugin_api"
 version = "0.2.0"
+source = "git+https://github.com/schoeller/OpenCADStudio?branch=main#f9c3546551fc578cfa6934adc29cff51a96fa3ba"
 dependencies = [
  "acadrust",
  "bincode",

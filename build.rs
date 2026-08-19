@@ -101,13 +101,20 @@ fn find_type_registry(manifest: &Manifest) -> PathBuf {
         }
     }
 
-    if let Some((_, path)) = candidates.into_iter().next() {
-        return path;
+    if candidates.is_empty() {
+        panic!(
+            "type_registry.json not found in {} for ocs_plugin_api build output",
+            build_dir.display()
+        )
     }
 
     panic!(
-        "type_registry.json not found in {} for ocs_plugin_api build output",
-        build_dir.display()
+        "no type_registry.json in {} contains all required types: {:?}. \
+         The selected ocs_plugin_api registry is missing these entity kinds. \
+         If you added a new entity, ensure it is traced in ocs_plugin_api/build.rs \
+         and that the change is present in the ocs_plugin_api source (git rev or local path).",
+        build_dir.display(),
+        required
     )
 }
 

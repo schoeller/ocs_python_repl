@@ -18,10 +18,11 @@ default = []
 alloc-debug = []
 
 [dependencies]
-# This crate is developed inside the OpenCADStudio monorepo, so it uses the
-# local `ocs_plugin_api` path. For standalone plugin builds against a released
-# host, replace this with the upstream git dependency at the matching rev.
-ocs_plugin_api = { path = "../ocs_plugin_api", features = ["host"] }
+# Standalone plugin builds pull the host contract from the upstream
+# OpenCADStudio repo. If you need custom entity types (e.g. the MText changes
+# in the local monorepo), push them to your fork and update this URL/rev, or
+# use a `.cargo/config.toml` patch for local development.
+ocs_plugin_api = { git = "https://github.com/schoeller/OpenCADStudio", branch = "main", features = ["host"] }
 acadrust = { git = "https://github.com/HakanSeven12/cadcodec.git", rev = "931c4ab", features = ["serde"] }
 pyo3 = { version = "0.23", features = ["extension-module", "abi3-py38"] }
 serde = { version = "=1.0.228", features = ["derive"] }
@@ -40,7 +41,7 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_
 
 [build-dependencies]
 # Must stay in sync with the runtime dependency above.
-ocs_plugin_api = { path = "../ocs_plugin_api", features = ["host"] }
+ocs_plugin_api = { git = "https://github.com/schoeller/OpenCADStudio", branch = "main", features = ["host"] }
 serde = { version = "=1.0.228", features = ["derive"] }
 serde_json = "1"
 # PyO3's extension-module feature intentionally does not link libpython on Unix.
