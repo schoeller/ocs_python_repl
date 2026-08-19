@@ -51,7 +51,7 @@ polyline_handle = ocs.doc.add(pl)
 print(f"Added Polyline handle={polyline_handle}")
 
 # LwPolyline -------------------------------------------------------------------
-lw = LwPolyline(points=[(0.0, 100.0, 0.0), (100.0, 100.0, 0.0), (100.0, 150.0, 0.0)])
+lw = LwPolyline(points=[(0.0, 100.0), (100.0, 100.0), (100.0, 150.0)])
 lw_handle = ocs.doc.add(lw)
 print(f"Added LwPolyline handle={lw_handle}")
 

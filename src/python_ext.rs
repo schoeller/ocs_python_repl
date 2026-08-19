@@ -195,6 +195,11 @@ fn set_common<T: EntityTrait>(e: &mut T, entity: &Bound<'_, PyAny>) -> PyResult<
 
 /// Return an attribute if `entity` is an object, or a dict item if it is a dict.
 /// Returns `None` if the attribute is missing **or** if its value is Python `None`.
+///
+/// This helper is referenced by generated code in `entity_crud.rs` whenever the
+/// registry contains an `Option<T>` field, so it may be unused for some registry
+/// snapshots. Keep it available for the generator.
+#[allow(dead_code)]
 fn opt_entity_attr<'py>(entity: &Bound<'py, PyAny>, key: &str) -> Option<Bound<'py, PyAny>> {
     entity_attr(entity, key).filter(|v| !v.is_none())
 }

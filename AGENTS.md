@@ -184,13 +184,16 @@ and document why the override exists in `manual_overrides`.
 ## Common pitfalls
 
 - **Build order:** `ocs_python_repl` reads the registry produced by
-  `ocs_plugin_api`. If the registry is stale, delete
+  `ocs_plugin_api`. `build.rs` now validates that the selected registry
+  contains every entity in `crud_manifest.json.type_filter` plus
+  `EntityCommon`; if the build picks a stale artifact, delete
   `crates/ocs_python_repl/target` and rebuild both crates.
 
-- **Type registry not found:** `ocs_python_repl/build.rs` searches
-  `crates/ocs_python_repl/target/<profile>/build/ocs_plugin_api-*/out/type_registry.json`.
-  If you build from the workspace root, the paths differ; build with the
-  manifest path:
+- **Type registry selection:** `ocs_python_repl/build.rs` searches
+  `crates/ocs_python_repl/target/<profile>/build/ocs_plugin_api-*/out/type_registry.json`
+  and prefers the newest registry that contains all required types. If you
+  build from the workspace root, the paths differ; build with the manifest
+  path:
 
   ```powershell
   cargo build --manifest-path crates/ocs_python_repl/Cargo.toml

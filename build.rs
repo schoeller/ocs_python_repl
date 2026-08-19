@@ -34,7 +34,7 @@ fn write_file(path: &Path, content: &str) {
 
 fn run_generation(out_dir: &Path) {
     let manifest = Manifest::load();
-    let registry_path = find_type_registry();
+    let registry_path = find_type_registry(&manifest);
     let registry = TypeRegistry::load(&registry_path);
 
     let ocs_dir = out_dir.join("python/ocs");
@@ -46,7 +46,7 @@ fn run_generation(out_dir: &Path) {
     write_file(&out_dir.join("entity_crud.rs"), &entity_crud_rs);
 }
 
-fn find_type_registry() -> PathBuf {
+fn find_type_registry(manifest: &Manifest) -> PathBuf {
     let target_dir = env::var("CARGO_TARGET_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target"));
@@ -72,17 +72,43 @@ fn find_type_registry() -> PathBuf {
         candidates.push((mtime, path));
     }
 
+    // Prefer the newest registry that actually contains every type we need.
+    // Stale/incomplete build artifacts can accumulate in the target directory,
+    // and picking purely by mtime produces non-deterministic generated bindings.
     candidates.sort_by(|a, b| b.0.cmp(&a.0));
-    candidates
-        .into_iter()
-        .next()
-        .map(|(_, p)| p)
-        .unwrap_or_else(|| {
-            panic!(
-                "type_registry.json not found in {} for ocs_plugin_api build output",
-                build_dir.display()
-            )
-        })
+    let required: std::collections::BTreeSet<&str> = manifest
+        .type_filter
+        .iter()
+        .map(String::as_str)
+        .chain(["EntityCommon"])
+        .collect();
+    for (_, path) in &candidates {
+        let text = fs::read_to_string(path).unwrap_or_default();
+        if let Ok(registry) = serde_json::from_str::<TypeRegistry>(&text) {
+            let missing: Vec<&str> = required
+                .iter()
+                .copied()
+                .filter(|name| registry.get(name).is_none())
+                .collect();
+            if missing.is_empty() {
+                return path.clone();
+            }
+            eprintln!(
+                "[ocs_python_repl build] skipping stale registry {} (missing: {:?})",
+                path.display(),
+                missing
+            );
+        }
+    }
+
+    if let Some((_, path)) = candidates.into_iter().next() {
+        return path;
+    }
+
+    panic!(
+        "type_registry.json not found in {} for ocs_plugin_api build output",
+        build_dir.display()
+    )
 }
 
 fn write_repl_wrapper(dest: &Path) {
@@ -403,7 +429,19 @@ if _SESSION_DIR not in sys.path:
 import ocs
 
 _snapshot_path = os.environ.get("OCS_V4_SNAPSHOT", "")
-ocs.doc = ocs._init(_snapshot_path)
+if _snapshot_path:
+    ocs.doc = ocs._init(_snapshot_path)
+else:
+    # Running outside the host (e.g. in tests). Provide a dummy document so
+    # the module still imports and the helper functions are available.
+    class _NoDocument:
+        def __getattr__(self, name):
+            raise RuntimeError(
+                "ocs.doc is not available: run PYTHONSHELL from OpenCADStudio "
+                "or set OCS_V4_SNAPSHOT to a valid snapshot path."
+            )
+
+    ocs.doc = _NoDocument()
 
 
 def _pyimport(path):

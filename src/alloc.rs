@@ -3,25 +3,39 @@
 //! Logs any allocation larger than 1 GiB along with a backtrace so we can
 //! identify the code path that requests the impossible allocation seen when
 //! the Python REPL starts with certain documents.
+//!
+//! The allocator is only active when the `alloc-debug` feature is enabled.
+//! In normal builds the module still exposes `init_log`/`probe_allocator`
+//! helpers, but they are no-ops.
 
+#[cfg(feature = "alloc-debug")]
 use std::alloc::{GlobalAlloc, Layout, System};
+#[cfg(feature = "alloc-debug")]
 use std::backtrace::Backtrace;
+#[cfg(feature = "alloc-debug")]
 use std::cell::Cell;
 
+#[cfg(feature = "alloc-debug")]
 const THRESHOLD: usize = 1024 * 1024 * 1024; // 1 GiB
+#[cfg(feature = "alloc-debug")]
 const LOG_NAME: &str = "ocs_repl_alloc.log";
 
 /// Write a marker line to the allocation log without triggering an allocation.
 ///
 /// This is used to confirm the allocator logging path works from a given
 /// process (especially the Python child process that loads this cdylib).
+#[cfg(feature = "alloc-debug")]
 pub fn init_log() {
     log_line("alloc log initialized");
 }
 
+#[cfg(not(feature = "alloc-debug"))]
+pub fn init_log() {}
+
 /// Probe whether this process is actually routing allocations through our
 /// global allocator. Allocates a 1 GiB + 1 byte buffer inside a catch-unwind
 /// so the probe itself does not abort the process.
+#[cfg(feature = "alloc-debug")]
 pub fn probe_allocator() {
     struct ResetGuard;
     impl Drop for ResetGuard {
@@ -40,6 +54,10 @@ pub fn probe_allocator() {
     }
 }
 
+#[cfg(not(feature = "alloc-debug"))]
+pub fn probe_allocator() {}
+
+#[cfg(feature = "alloc-debug")]
 fn log_line(msg: &str) {
     use std::io::Write;
     let path = std::env::temp_dir().join(LOG_NAME);
@@ -60,12 +78,15 @@ fn log_line(msg: &str) {
     }
 }
 
+#[cfg(feature = "alloc-debug")]
 pub struct LoggingAllocator;
 
+#[cfg(feature = "alloc-debug")]
 thread_local! {
     static INSIDE: Cell<bool> = const { Cell::new(false) };
 }
 
+#[cfg(feature = "alloc-debug")]
 fn log_large_alloc(size: usize) {
     // Prevent recursion: Backtrace::capture allocates.
     if INSIDE.with(|b| b.get()) {
@@ -95,6 +116,7 @@ fn log_large_alloc(size: usize) {
     INSIDE.with(|b| b.set(false));
 }
 
+#[cfg(feature = "alloc-debug")]
 unsafe impl GlobalAlloc for LoggingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         if layout.size() > THRESHOLD {
@@ -122,5 +144,6 @@ unsafe impl GlobalAlloc for LoggingAllocator {
     }
 }
 
+#[cfg(feature = "alloc-debug")]
 #[global_allocator]
 static GLOBAL: LoggingAllocator = LoggingAllocator;

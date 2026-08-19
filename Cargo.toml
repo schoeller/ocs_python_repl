@@ -11,12 +11,17 @@ license = "GPL-3.0-only"
 name = "ocs_python_repl"
 crate-type = ["cdylib", "rlib"]
 
+[features]
+default = []
+# Enable the diagnostic global allocator that logs allocations larger than 1 GiB.
+# This is useful for debugging OOM aborts but adds overhead to every allocation.
+alloc-debug = []
+
 [dependencies]
-# Standalone plugin builds pull the stable host contract from the upstream
-# OpenCADStudio repo. The rev MUST match the host release you are targeting.
-# When developing inside the OpenCADStudio monorepo, you can temporarily
-# replace this with `path = "../ocs_plugin_api"`.
-ocs_plugin_api = { git = "https://github.com/HakanSeven12/OpenCADStudio", rev = "fcd4a278e40f3a38614427991fc67ef6a402c972", features = ["host"] }
+# This crate is developed inside the OpenCADStudio monorepo, so it uses the
+# local `ocs_plugin_api` path. For standalone plugin builds against a released
+# host, replace this with the upstream git dependency at the matching rev.
+ocs_plugin_api = { path = "../ocs_plugin_api", features = ["host"] }
 acadrust = { git = "https://github.com/HakanSeven12/cadcodec.git", rev = "931c4ab", features = ["serde"] }
 pyo3 = { version = "0.23", features = ["extension-module", "abi3-py38"] }
 serde = { version = "=1.0.228", features = ["derive"] }
@@ -35,7 +40,7 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_
 
 [build-dependencies]
 # Must stay in sync with the runtime dependency above.
-ocs_plugin_api = { git = "https://github.com/HakanSeven12/OpenCADStudio", rev = "fcd4a278e40f3a38614427991fc67ef6a402c972", features = ["host"] }
+ocs_plugin_api = { path = "../ocs_plugin_api", features = ["host"] }
 serde = { version = "=1.0.228", features = ["derive"] }
 serde_json = "1"
 # PyO3's extension-module feature intentionally does not link libpython on Unix.

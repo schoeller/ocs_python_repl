@@ -684,7 +684,11 @@ fn generate_entity_to_py(manifest: &Manifest, registry: &TypeRegistry) -> String
     let entities = py.import("ocs.entities")?;
     let (kind, kwargs): (&str, Bound<'_, PyDict>) = match entity {{
 {arms}
-        other => ("Entity", base_kwargs(py, other.common().layer.clone())?),
+        _other => {{
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "entity kind is not in the Python binding allow-list".to_string(),
+            ));
+        }}
     }};
     let cls = entities.getattr(kind)?;
     let obj = cls.call((), Some(&kwargs))?;

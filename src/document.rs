@@ -130,8 +130,28 @@ impl Document {
             proxy: proxy.map(Arc::new),
             handle_index: Mutex::new(HashMap::new()),
         };
+        doc.rebuild_handle_index()?;
         debug_log("[python-repl] Document::new returning");
         Ok(doc)
+    }
+
+    /// (Re)build the handle -> entity index from the current snapshot payload.
+    fn rebuild_handle_index(&self) -> PyResult<()> {
+        let reader = self
+            .reader
+            .lock()
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+        let mut index = self
+            .handle_index
+            .lock()
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+        index.clear();
+        if let Some(archived) = reader.payload() {
+            for (i, e) in archived.entities.iter().enumerate() {
+                index.insert(e.handle, i);
+            }
+        }
+        Ok(())
     }
 
     /// Refresh the cached snapshot version if the host has published a newer one.
@@ -144,17 +164,8 @@ impl Document {
             return Ok(());
         }
         reader.refresh();
-        if let Some(archived) = reader.payload() {
-            let mut index = self
-                .handle_index
-                .lock()
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-            index.clear();
-            for (i, e) in archived.entities.iter().enumerate() {
-                index.insert(e.handle, i);
-            }
-        }
-        Ok(())
+        drop(reader);
+        self.rebuild_handle_index()
     }
 
     fn entities(&self, py: Python<'_>) -> PyResult<Vec<PyObject>> {

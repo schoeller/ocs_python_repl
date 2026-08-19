@@ -7,7 +7,3 @@ api_version = 4
 ribbon_order = 70
 command_prefixes = ["PYTHONSHELL"]
 xdata_apps = ["PYREPL"]
-api_version = 4
-ribbon_order = 70
-command_prefixes = ["PYTHONSHELL"]
-xdata_apps = ["PYREPL"]

@@ -27,7 +27,7 @@ use crate::repl::ReplSession;
 static MANIFEST: PluginManifest = PluginManifest {
     id: "opencad.python_repl",
     name: "Python REPL",
-    version: "0.1.0",
+    version: env!("CARGO_PKG_VERSION"),
     description: "Interactive Python REPL for Open CAD Studio.",
     api_version: ocs_plugin_api::manifest::ApiVersion { major: 4 },
     ribbon_order: 70,
