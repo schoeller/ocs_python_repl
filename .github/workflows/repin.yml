@@ -269,8 +269,7 @@ jobs:
           print(f"ANYHOW={pkg_version('anyhow')}")
           print(f"GETRANDOM={pkg_version('getrandom')}")
           print(f"LIBC={pkg_version('libc')}")
-          if windows_sys_versions:
-              print(f"WINDOWS_SYS={windows_sys_versions[-1]}")
+          print(f"WINDOWS_SYS={pkg_version('windows-sys')}")
           PYEOF
 
           python3 /tmp/repin.py >> "$GITHUB_ENV"
