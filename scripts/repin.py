@@ -26,6 +26,7 @@ from pathlib import Path
 UPSTREAM = "HakanSeven12/OpenCADStudio"
 UPSTREAM_URL = f"https://github.com/{UPSTREAM}"
 LOCK_URL = f"https://raw.githubusercontent.com/{UPSTREAM}/{{tag}}/Cargo.lock"
+API_TOML_URL = f"https://raw.githubusercontent.com/{UPSTREAM}/{{tag}}/crates/ocs_plugin_api/Cargo.toml"
 
 
 def read_upstream_tag(path: Path) -> str:
@@ -38,11 +39,40 @@ def read_upstream_tag(path: Path) -> str:
     raise SystemExit(f"no upstream tag found in {path}")
 
 
-def fetch_lock(tag: str) -> str:
-    url = LOCK_URL.format(tag=tag)
+def fetch_url(url: str) -> str:
     print(f"fetching {url}")
     with urllib.request.urlopen(url, timeout=60) as resp:
         return resp.read().decode("utf-8")
+
+
+def fetch_lock(tag: str) -> str:
+    return fetch_url(LOCK_URL.format(tag=tag))
+
+
+def fetch_api_toml(tag: str) -> str:
+    return fetch_url(API_TOML_URL.format(tag=tag))
+
+
+def acadrust_rev_from_api_toml(text: str) -> tuple[str, str]:
+    """Return (git_url, rev) for acadrust as declared in ocs_plugin_api/Cargo.toml.
+
+    Cargo unifies git sources by their exact reference string, so we must use
+    the same rev form that upstream uses (e.g. a short hash), not the full
+    40-char hash from Cargo.lock.
+    """
+    for line in text.splitlines():
+        line = line.split("#", 1)[0].strip()
+        if "acadrust" not in line:
+            continue
+        m = re.search(r'git\s*=\s*"([^"]+)"', line)
+        if not m:
+            continue
+        url = m.group(1)
+        m = re.search(r'rev\s*=\s*"([^"]+)"', line)
+        if not m:
+            raise SystemExit(f"acadrust dependency in ocs_plugin_api/Cargo.toml has no rev: {line}")
+        return url, m.group(1)
+    raise SystemExit("could not find acadrust dependency in ocs_plugin_api/Cargo.toml")
 
 
 def lock_packages(text: str):
@@ -56,14 +86,16 @@ def lock_packages(text: str):
             yield name.group(1), version.group(1), source.group(1) if source else None
 
 
-def upstream_direct_deps(text: str, upstream_name: str = "OpenCADStudio") -> dict[str, str]:
-    """Return name -> version for the upstream workspace package's direct deps.
+def upstream_direct_deps(text: str, package_name: str = "ocs_plugin_api") -> dict[str, str]:
+    """Return name -> version for a package's direct deps from Cargo.lock.
 
     Cargo.lock lists duplicate crate versions as 'name = "foo"' plus
-    'version = "x.y.z"' inside the workspace package's `dependencies` array.
+    'version = "x.y.z"' inside the package's `dependencies` array. We parse the
+    ocs_plugin_api block so we match the versions the host contract actually
+    uses, rather than versions pulled in by unrelated workspace crates.
     """
     pattern = re.compile(
-        rf'^name = "{re.escape(upstream_name)}"\s*\n'
+        rf'^name = "{re.escape(package_name)}"\s*\n'
         r'^version = "[^"]+"\s*\n'
         r'(?:^source = "[^"]+"\s*\n)?'
         r'^dependencies = \[(.*?)\]',
@@ -71,7 +103,7 @@ def upstream_direct_deps(text: str, upstream_name: str = "OpenCADStudio") -> dic
     )
     m = pattern.search(text)
     if not m:
-        raise SystemExit(f"could not find {upstream_name} package in upstream Cargo.lock")
+        raise SystemExit(f"could not find {package_name} package in upstream Cargo.lock")
 
     deps_text = m.group(1)
     deps: dict[str, str] = {}
@@ -122,10 +154,11 @@ def main() -> int:
     print(f"re-pinning to upstream tag {tag}")
 
     lock_text = fetch_lock(tag)
+    api_toml_text = fetch_api_toml(tag)
     packages = {name: (ver, src) for name, ver, src in lock_packages(lock_text)}
     direct_deps = upstream_direct_deps(lock_text)
 
-    acad_url, acad_rev = git_source(packages, "acadrust")
+    acad_url, acad_rev = acadrust_rev_from_api_toml(api_toml_text)
 
     cargo_path = repo_root / "Cargo.toml"
     cargo = cargo_path.read_text(encoding="utf-8")

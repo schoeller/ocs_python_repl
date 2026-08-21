@@ -126,8 +126,11 @@ jobs:
           gh api "repos/$UPSTREAM/contents/Cargo.lock?ref=$TAG" \
             -H "Accept: application/vnd.github.raw" > /tmp/host-Cargo.lock
 
+          gh api "repos/$UPSTREAM/contents/crates/ocs_plugin_api/Cargo.toml?ref=$TAG" \
+            -H "Accept: application/vnd.github.raw" > /tmp/host-ocs_plugin_api-Cargo.toml
+
           # Write a Python helper script that parses the upstream Cargo.lock
-          # and rewrites Cargo.toml with matching pins.
+          # and ocs_plugin_api/Cargo.toml, then rewrites Cargo.toml with matching pins.
           cat > /tmp/repin.py <<'PYEOF'
           import os
           re = __import__("re")
@@ -144,6 +147,7 @@ jobs:
           TAG = os.environ["TAG"]
 
           lock_text = open("/tmp/host-Cargo.lock").read()
+          api_toml_text = open("/tmp/host-ocs_plugin_api-Cargo.toml").read()
 
           def lock_packages(text):
               """Yield (name, version, source) blocks from a Cargo.lock."""
@@ -155,10 +159,15 @@ jobs:
                   if name and version:
                       yield name.group(1), version.group(1), source.group(1) if source else None
 
-          def upstream_direct_deps(text, upstream_name="OpenCADStudio"):
-              """Return name -> version for the upstream workspace package's direct deps."""
+          def upstream_direct_deps(text, package_name="ocs_plugin_api"):
+              """Return name -> version for a package's direct deps from Cargo.lock.
+
+              We parse the ocs_plugin_api block so we match the versions the host
+              contract actually uses, rather than versions pulled in by unrelated
+              workspace crates.
+              """
               pattern = re.compile(
-                  rf'^name = "{re.escape(upstream_name)}"\s*\n'
+                  rf'^name = "{re.escape(package_name)}"\s*\n'
                   r'^version = "[^"]+"\s*\n'
                   r'(?:^source = "[^"]+"\s*\n)?'
                   r'^dependencies = \[(.*?)\]',
@@ -166,7 +175,7 @@ jobs:
               )
               m = pattern.search(text)
               if not m:
-                  raise SystemExit(f"could not find {upstream_name} package in upstream Cargo.lock")
+                  raise SystemExit(f"could not find {package_name} package in upstream Cargo.lock")
               deps_text = m.group(1)
               deps = {}
               for line in deps_text.splitlines():
@@ -190,20 +199,32 @@ jobs:
                   raise SystemExit(f"{name} not found in upstream Cargo.lock")
               return packages[name][0]
 
-          def git_source(name):
-              ver, src = packages[name]
-              if src is None:
-                  raise SystemExit(f"{name} is not a git dependency in upstream Cargo.lock")
-              m = re.fullmatch(r"git\+(?P<url>[^?#]+)(\?[^#]*)?#(?P<rev>[0-9a-f]{40})", src)
-              if not m:
-                  raise SystemExit(f"unparseable git source for {name}: {src}")
-              return m.group("url"), m.group("rev")
+          def acadrust_rev_from_api_toml(text):
+              """Return (git_url, rev) for acadrust from ocs_plugin_api/Cargo.toml.
+
+              Cargo unifies git sources by their exact reference string, so we must
+              use the same rev form upstream uses (e.g. a short hash), not the full
+              40-char hash from Cargo.lock.
+              """
+              for line in text.splitlines():
+                  line = line.split("#", 1)[0].strip()
+                  if "acadrust" not in line:
+                      continue
+                  m = re.search(r'git\s*=\s*"([^"]+)"', line)
+                  if not m:
+                      continue
+                  url = m.group(1)
+                  m = re.search(r'rev\s*=\s*"([^"]+)"', line)
+                  if not m:
+                      raise SystemExit(f"acadrust dependency has no rev: {line}")
+                  return url, m.group(1)
+              raise SystemExit("could not find acadrust dependency in ocs_plugin_api/Cargo.toml")
 
           # ocs_plugin_api lives in the upstream repo itself, so pin by tag.
           ocs_api_url = f"https://github.com/{UPSTREAM}"
 
-          # acadrust is a separate git repo; pin to the exact upstream rev.
-          acad_url, acad_rev = git_source("acadrust")
+          # acadrust is a separate git repo; pin to the exact upstream rev form.
+          acad_url, acad_rev = acadrust_rev_from_api_toml(api_toml_text)
 
           cargo_path = "Cargo.toml"
           cargo = open(cargo_path).read()
