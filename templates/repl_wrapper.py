@@ -31,6 +31,7 @@ def log(msg):
 
 
 log(f"wrapper started: python={PYTHON} platform={sys.platform}")
+log(f"wrapper pid={os.getpid()} parent_pid={os.getppid()}")
 
 
 def check_ipython():
@@ -267,7 +268,7 @@ def main():
             # whole session when the host requests it.
             proc = subprocess.Popen(cmd, env=env)
             install_windows_signal_handlers(proc)
-            log(f"spawned windows process pid={proc.pid}")
+            log(f"spawned windows process pid={proc.pid} cmd={' '.join(cmd)}")
         else:
             proc = spawn_unix(cmd, env)
             try:

@@ -201,6 +201,12 @@ fn spawn_wrapper_windows(
         ));
     }
 
+    eprintln!(
+        "[python-repl] spawn_wrapper python={} wrapper_pid={}",
+        python.display(),
+        proc_info.dwProcessId
+    );
+
     let _ = unsafe { CloseHandle(proc_info.hThread) };
 
     let job = create_job_object().ok();
