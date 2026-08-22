@@ -118,6 +118,16 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Capture current acadrust pin
+        id: old_pins
+        run: |
+          set -euo pipefail
+          old_url=$(grep -m1 '^acadrust = ' Cargo.toml | grep -oP 'git = "\K[^"]+' || true)
+          old_rev=$(grep -m1 '^acadrust = ' Cargo.toml | grep -oP 'rev = "\K[^"]+' || true)
+          echo "old_acadrust_url=$old_url" >> "$GITHUB_OUTPUT"
+          echo "old_acadrust_rev=$old_rev" >> "$GITHUB_OUTPUT"
+          echo "old acadrust: $old_url @ $old_rev"
+
       - name: Derive new pins from the upstream tag
         id: pins
         run: |
@@ -357,7 +367,7 @@ jobs:
         run: |
           cargo generate-lockfile
           cargo build --release --locked
-          cargo test --locked
+          cargo test --locked -- --ignored
 
       - name: Build the host at the release tag
         run: |
@@ -401,6 +411,8 @@ jobs:
           HOST_TAG: ${{ steps.pins.outputs.host_tag }}
           ACADRUST_URL: ${{ steps.pins.outputs.acadrust_url }}
           ACADRUST_REV: ${{ steps.pins.outputs.acadrust_rev }}
+          OLD_ACADRUST_URL: ${{ steps.old_pins.outputs.old_acadrust_url }}
+          OLD_ACADRUST_REV: ${{ steps.old_pins.outputs.old_acadrust_rev }}
           NEWVER: ${{ steps.bump.outputs.newver }}
           API_VERSION: ${{ steps.apiver.outputs.api_version }}
         run: |

@@ -92,7 +92,7 @@ jobs:
 
       - uses: softprops/action-gh-release@v3
         with:
-          tag_name: ${{ github.ref_name }}
+          tag_name: ${{ inputs.tag || github.ref_name }}
           files: |
             dist/${{ matrix.asset }}
             dist/plugin.toml

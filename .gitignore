@@ -1,0 +1,35 @@
+# Rust build artifacts
+/target
+**/*.rs.bk
+Cargo.lock.bak
+
+# Python
+**/__pycache__/
+**/*.py[cod]
+**/*$py.class
+**/.pytest_cache/
+
+# Compiled extension modules (may be copied/hardlinked during tests)
+*.so
+*.dylib
+*.dll
+*.pyd
+
+# Session directories created at runtime
+ocs_python_repl_*/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+ocs_repl_debug.log
+ocs_repl_alloc.log
