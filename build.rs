@@ -22,7 +22,13 @@ fn main() {
 
     // PyO3's extension-module feature does not link libpython on Unix. On
     // macOS the linker must be told to resolve Python symbols at load time.
+    // On Linux the OCS plugin runner (not Python) loads this cdylib first, so
+    // defer Python symbol resolution until the Python child actually uses them.
     pyo3_build_config::add_extension_module_link_args();
+    #[cfg(target_os = "linux")]
+    {
+        println!("cargo:rustc-link-arg=-Wl,-z,lazy");
+    }
 
     write_repl_wrapper(&dest);
     write_startup(&dest);
