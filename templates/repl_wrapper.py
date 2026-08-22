@@ -32,13 +32,6 @@ def log(msg):
 
 log(f"wrapper started: python={PYTHON} platform={sys.platform}")
 
-# Record our own PID so the host can target this process exactly.
-try:
-    with open(os.path.join(SESSION_DIR, "wrapper.pid"), "w", encoding="utf-8") as f:
-        f.write(str(os.getpid()))
-except Exception:
-    pass
-
 
 def check_ipython():
     try:
@@ -275,13 +268,6 @@ def main():
             proc = subprocess.Popen(cmd, env=env)
             install_windows_signal_handlers(proc)
             log(f"spawned windows process pid={proc.pid}")
-            try:
-                with open(
-                    os.path.join(SESSION_DIR, "ipython.pid"), "w", encoding="utf-8"
-                ) as f:
-                    f.write(str(proc.pid))
-            except Exception:
-                pass
         else:
             proc = spawn_unix(cmd, env)
             try:

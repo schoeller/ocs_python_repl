@@ -214,7 +214,6 @@ fn spawn_wrapper_windows(
                 job: None,
                 handle: proc_info.hProcess,
                 pid: proc_info.dwProcessId,
-                session_dir: Some(session_dir.to_path_buf()),
             });
         }
     }
@@ -223,7 +222,6 @@ fn spawn_wrapper_windows(
         job,
         handle: proc_info.hProcess,
         pid: proc_info.dwProcessId,
-        session_dir: Some(session_dir.to_path_buf()),
     })
 }
 
@@ -318,9 +316,6 @@ pub fn kill_group(group: &ProcessGroup) {
 
 #[cfg(windows)]
 pub fn kill_group(group: &ProcessGroup) {
-    use std::collections::{HashMap, HashSet};
-    use std::thread;
-    use std::time::Duration;
     use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
     use windows_sys::Win32::System::Diagnostics::ToolHelp::{
         CreateToolhelp32Snapshot, Process32First, Process32Next, PROCESSENTRY32, TH32CS_SNAPPROCESS,
@@ -332,36 +327,20 @@ pub fn kill_group(group: &ProcessGroup) {
         if let Some(job) = group.job {
             let _ = TerminateJobObject(job, 1);
         }
-    }
 
-    // Collect known PIDs written by the wrapper. These give us exact targets
-    // even if the ToolHelp snapshot is momentarily stale.
-    let mut known_pids: Vec<u32> = Vec::new();
-    if let Some(dir) = &group.session_dir {
-        for name in ["wrapper.pid", "ipython.pid"] {
-            if let Ok(text) = std::fs::read_to_string(dir.join(name)) {
-                if let Ok(pid) = text.trim().parse::<u32>() {
-                    known_pids.push(pid);
-                }
-            }
-        }
-    }
-
-    const MAX_ATTEMPTS: usize = 3;
-    for attempt in 0..MAX_ATTEMPTS {
-        let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
-        if snapshot == INVALID_HANDLE_VALUE || snapshot.is_null() {
-            break;
-        }
-
-        let mut parent_to_children: HashMap<u32, Vec<u32>> = HashMap::new();
-        let mut entry = PROCESSENTRY32 {
-            dwSize: std::mem::size_of::<PROCESSENTRY32>() as u32,
-            ..Default::default()
-        };
-
-        unsafe {
+        // The job object only kills processes assigned to it; children started
+        // by the wrapper (e.g. IPython) may survive. Enumerate the process tree
+        // and terminate descendants, then the root.
+        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        let mut descendants = Vec::new();
+        if snapshot != INVALID_HANDLE_VALUE && !snapshot.is_null() {
+            let mut entry = PROCESSENTRY32 {
+                dwSize: std::mem::size_of::<PROCESSENTRY32>() as u32,
+                ..Default::default()
+            };
             if Process32First(snapshot, &mut entry) != 0 {
+                let mut parent_to_children: std::collections::HashMap<u32, Vec<u32>> =
+                    std::collections::HashMap::new();
                 loop {
                     parent_to_children
                         .entry(entry.th32ParentProcessID)
@@ -371,53 +350,27 @@ pub fn kill_group(group: &ProcessGroup) {
                         break;
                     }
                 }
+                let mut stack = vec![group.pid];
+                while let Some(pid) = stack.pop() {
+                    if let Some(children) = parent_to_children.get(&pid) {
+                        for &child in children {
+                            if child != group.pid && !descendants.contains(&child) {
+                                descendants.push(child);
+                                stack.push(child);
+                            }
+                        }
+                    }
+                }
             }
             let _ = CloseHandle(snapshot);
         }
 
-        // Enumerate descendants of the wrapper root and any known PIDs.
-        let mut descendants = Vec::new();
-        let mut seen = HashSet::new();
-        let roots: Vec<u32> = known_pids
-            .iter()
-            .copied()
-            .chain(std::iter::once(group.pid))
-            .collect();
-        let mut stack = roots.clone();
-        while let Some(pid) = stack.pop() {
-            if let Some(children) = parent_to_children.get(&pid) {
-                for &child in children {
-                    if child != group.pid && seen.insert(child) {
-                        descendants.push(child);
-                        stack.push(child);
-                    }
-                }
+        for pid in descendants.iter().rev().chain(std::iter::once(&group.pid)) {
+            let h = OpenProcess(PROCESS_TERMINATE, 0, *pid);
+            if !h.is_null() && h != INVALID_HANDLE_VALUE {
+                let _ = TerminateProcess(h, 1);
+                let _ = CloseHandle(h);
             }
-        }
-
-        // Terminate deepest descendants first, then the root on the final pass.
-        for pid in descendants.iter().rev() {
-            unsafe {
-                let h = OpenProcess(PROCESS_TERMINATE, 0, *pid);
-                if !h.is_null() && h != INVALID_HANDLE_VALUE {
-                    let _ = TerminateProcess(h, 1);
-                    let _ = CloseHandle(h);
-                }
-            }
-        }
-
-        if attempt == MAX_ATTEMPTS - 1 {
-            for pid in roots {
-                unsafe {
-                    let h = OpenProcess(PROCESS_TERMINATE, 0, pid);
-                    if !h.is_null() && h != INVALID_HANDLE_VALUE {
-                        let _ = TerminateProcess(h, 1);
-                        let _ = CloseHandle(h);
-                    }
-                }
-            }
-        } else {
-            thread::sleep(Duration::from_millis(50));
         }
     }
 }
@@ -505,7 +458,6 @@ pub struct ProcessGroup {
     job: Option<windows_sys::Win32::Foundation::HANDLE>,
     handle: windows_sys::Win32::Foundation::HANDLE,
     pid: u32,
-    session_dir: Option<PathBuf>,
 }
 
 #[cfg(windows)]
@@ -654,7 +606,6 @@ pub fn spawn_test_group(cmd: &mut Command) -> std::io::Result<ProcessGroup> {
             job: None,
             handle: std::ptr::null_mut(),
             pid,
-            session_dir: None,
         })
     }
 }
