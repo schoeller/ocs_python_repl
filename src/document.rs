@@ -16,6 +16,8 @@ use pyo3::types::PyDict;
 
 use crate::python_ext::{entity_to_py, py_to_entity, py_to_xdata_record, xdata_record_to_py};
 
+include!(concat!(env!("OUT_DIR"), "/counts_mapping.rs"));
+
 /// Append a diagnostic line to a fixed temp log file and flush it immediately.
 /// This survives OOM aborts of the process better than stderr buffering.
 pub fn debug_log(msg: &str) {
@@ -74,6 +76,20 @@ Run PYTHONSHELL from the host to mutate the document; \
 standalone Python processes only have read-only access to the snapshot."
             .to_string(),
     ))
+}
+
+fn lock_reader(
+    doc: &Document,
+) -> PyResult<std::sync::MutexGuard<'_, SharedDocumentReader<DocumentViewDataV4>>> {
+    doc.reader
+        .lock()
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+}
+
+fn lock_index(doc: &Document) -> PyResult<std::sync::MutexGuard<'_, HashMap<u64, usize>>> {
+    doc.handle_index
+        .lock()
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
 }
 
 #[pymethods]
@@ -137,14 +153,8 @@ impl Document {
 
     /// (Re)build the handle -> entity index from the current snapshot payload.
     fn rebuild_handle_index(&self) -> PyResult<()> {
-        let reader = self
-            .reader
-            .lock()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-        let mut index = self
-            .handle_index
-            .lock()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+        let reader = lock_reader(self)?;
+        let mut index = lock_index(self)?;
         index.clear();
         if let Some(archived) = reader.payload() {
             for (i, e) in archived.entities.iter().enumerate() {
@@ -156,10 +166,7 @@ impl Document {
 
     /// Refresh the cached snapshot version if the host has published a newer one.
     fn refresh(&self) -> PyResult<()> {
-        let mut reader = self
-            .reader
-            .lock()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+        let mut reader = lock_reader(self)?;
         if !reader.has_new_version() {
             return Ok(());
         }
@@ -169,10 +176,7 @@ impl Document {
     }
 
     fn entities(&self, py: Python<'_>) -> PyResult<Vec<PyObject>> {
-        let reader = self
-            .reader
-            .lock()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+        let reader = lock_reader(self)?;
         let archived = reader.payload().ok_or_else(|| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("no archived document")
         })?;
@@ -199,17 +203,11 @@ impl Document {
     }
 
     fn entity(&self, py: Python<'_>, handle: u64) -> PyResult<Option<PyObject>> {
-        let reader = self
-            .reader
-            .lock()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+        let reader = lock_reader(self)?;
         let archived = reader.payload().ok_or_else(|| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("no archived document")
         })?;
-        let index = self
-            .handle_index
-            .lock()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+        let index = lock_index(self)?;
         let Some(&idx) = index.get(&handle) else {
             return Ok(None);
         };
@@ -224,10 +222,7 @@ impl Document {
     }
 
     fn layers(&self) -> PyResult<HashMap<u64, String>> {
-        let reader = self
-            .reader
-            .lock()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+        let reader = lock_reader(self)?;
         let archived = reader.payload().ok_or_else(|| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("no archived document")
         })?;
@@ -240,10 +235,7 @@ impl Document {
 
     fn counts(&self) -> PyResult<HashMap<String, usize>> {
         let mut counts = HashMap::new();
-        let reader = self
-            .reader
-            .lock()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+        let reader = lock_reader(self)?;
         let archived = reader.payload().ok_or_else(|| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("no archived document")
         })?;
@@ -252,19 +244,7 @@ impl Document {
         for e in archived.entities.iter() {
             match deserialize_entity(&e.data) {
                 Ok(entity) => {
-                    let name = match entity {
-                        EntityType::Point(_) => "Point",
-                        EntityType::Line(_) => "Line",
-                        EntityType::Circle(_) => "Circle",
-                        EntityType::Arc(_) => "Arc",
-                        EntityType::Polyline(_) => "Polyline",
-                        EntityType::Polyline2D(_) => "Polyline2D",
-                        EntityType::Polyline3D(_) => "Polyline3D",
-                        EntityType::LwPolyline(_) => "LwPolyline",
-                        EntityType::Spline(_) => "Spline",
-                        EntityType::MText(_) => "MText",
-                        _ => "Other",
-                    };
+                    let name = entity_kind_name(&entity);
                     *counts.entry(name.to_string()).or_insert(0) += 1;
                 }
                 Err(err) => {
