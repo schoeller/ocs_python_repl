@@ -26,6 +26,7 @@ different working directory, use the absolute path instead.
 | `04_query_entities.py` | Refresh the snapshot and query counts/entities/layers. |
 | `05_advanced_entities.py` | Create Ellipse, Polyline2D, Polyline3D, and use Vector3/Color/Layer/XDataValue. |
 | `06_random_points_100.py` | Add exactly 100 random points in a 100 x 100 area. |
+| `07_osmnx_parks.py` | Fetch OpenStreetMap park polygons with OSMnx and import them as closed LwPolylines on layer `_park`. Requires `osmnx`. |
 
 ## Supported entity operations
 

@@ -232,6 +232,9 @@ More example scripts are in [`assets/examples/python_repl`](assets/examples/pyth
 - `04_query_entities.py` — query counts, layers, and entity lists.
 - `05_advanced_entities.py` — create Ellipse, Polyline2D, Polyline3D, and use
   Vector3, Color, Layer, and XDataValue.
+- `06_random_points_100.py` — add exactly 100 random points in a 100 x 100 area.
+- `07_osmnx_parks.py` — fetch OpenStreetMap park polygons with OSMnx and import
+  them as closed LwPolylines on layer `_park`. Requires `osmnx`.
 
 ### Generate 100 random points
 
