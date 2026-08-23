@@ -17,7 +17,7 @@ if _parent_dir not in sys.path:
     sys.path.insert(0, _parent_dir)
 
 def _load_extension():
-    """Load the Rust extension, coping with Windows refusing `.dll` imports."""
+    """Load the Rust extension, coping with platform-specific import suffixes."""
     try:
         import ocs_python_repl as _ocs  # type: ignore
         return _ocs
@@ -32,15 +32,19 @@ def _load_extension():
             "is on PYTHONPATH."
         )
 
-    # On Windows, Python's import machinery only recognises `.pyd` as an
-    # extension-module suffix. Copy/hardlink the cdylib into the session dir
-    # with the expected name so normal import succeeds.
-    _pyd_path = os.path.join(_parent_dir, "ocs_python_repl.pyd")
-    if not os.path.isfile(_pyd_path):
+    # Python's import machinery requires the file name to match the module
+    # name. On Windows the extension suffix is .pyd; on Linux/macOS it is .so.
+    # The installed cdylib has a platform-specific release name, so create a
+    # hardlink/copy with the expected import name in the session directory.
+    if sys.platform == "win32":
+        _ext_path = os.path.join(_parent_dir, "ocs_python_repl.pyd")
+    else:
+        _ext_path = os.path.join(_parent_dir, "ocs_python_repl.so")
+    if not os.path.isfile(_ext_path):
         try:
-            os.link(_cdylib_path, _pyd_path)
+            os.link(_cdylib_path, _ext_path)
         except Exception:
-            shutil.copy2(_cdylib_path, _pyd_path)
+            shutil.copy2(_cdylib_path, _ext_path)
     import ocs_python_repl as _ocs  # type: ignore
     return _ocs
 
