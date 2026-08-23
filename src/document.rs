@@ -1,13 +1,12 @@
 //! Python-facing document view backed by the host's V4 shared snapshot.
 
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use acadrust::{EntityType, Handle};
 use bincode::Options;
-use ocs_plugin_api::host::PluginRequestError;
+use ocs_plugin_api::host::{PluginRequestError, PluginRequestSender};
 use ocs_plugin_api::ipc::protocol::{PluginRequest, PluginResponse};
 use ocs_plugin_api::ipc::proxy::{ProxyPluginRequestSender, PROXY_TOKEN_LEN};
 use ocs_plugin_api::shm::{DocumentViewDataV4, SharedDocumentReader};
@@ -275,22 +274,13 @@ impl Document {
         Ok(counts)
     }
 
-    fn add<'py>(&self, py: Python<'py>, entity: &Bound<'py, PyAny>) -> PyResult<u64> {
+    fn add<'py>(&self, _py: Python<'py>, entity: &Bound<'py, PyAny>) -> PyResult<u64> {
         let entity = py_to_entity(entity)?;
         let sender = require_sender(self)?;
-        let interrupt: RefCell<Option<PyErr>> = RefCell::new(None);
-        let result = sender.request_with_poll(PluginRequest::AddEntity(entity), &mut || {
-            if let Err(e) = py.check_signals() {
-                *interrupt.borrow_mut() = Some(e);
-                return Err(ocs_plugin_api::host::PluginRequestError(
-                    "interrupted".to_string(),
-                ));
-            }
-            Ok(())
-        });
-        if let Some(e) = interrupt.into_inner() {
-            return Err(e);
-        }
+        // request_with_poll has a desync bug when the TCP read timeout fires
+        // between reading the length prefix and the payload. Until that is fixed
+        // in ocs_plugin_api, use the blocking request() path.
+        let result = sender.request(PluginRequest::AddEntity(entity));
         match result {
             Ok(PluginResponse::Handle(h)) => Ok(h.value()),
             Ok(other) => Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
@@ -304,7 +294,7 @@ impl Document {
 
     fn add_many<'py>(
         &self,
-        py: Python<'py>,
+        _py: Python<'py>,
         entities: &Bound<'py, pyo3::types::PyList>,
     ) -> PyResult<Vec<u64>> {
         let entities: Vec<EntityType> = entities
@@ -316,27 +306,14 @@ impl Document {
             entities.len()
         ));
         if let Some(first) = entities.first() {
-            let sample =
-                bincode::serialize(first).unwrap_or_default();
+            let sample = bincode::serialize(first).unwrap_or_default();
             debug_log(&format!(
                 "[python-repl] add_many: first entity serialized size={}",
                 sample.len()
             ));
         }
         let sender = require_sender(self)?;
-        let interrupt: RefCell<Option<PyErr>> = RefCell::new(None);
-        let result = sender.request_with_poll(PluginRequest::AddEntities(entities), &mut || {
-            if let Err(e) = py.check_signals() {
-                *interrupt.borrow_mut() = Some(e);
-                return Err(ocs_plugin_api::host::PluginRequestError(
-                    "interrupted".to_string(),
-                ));
-            }
-            Ok(())
-        });
-        if let Some(e) = interrupt.into_inner() {
-            return Err(e);
-        }
+        let result = sender.request(PluginRequest::AddEntities(entities));
         match result {
             Ok(PluginResponse::Handles(handles)) => {
                 Ok(handles.into_iter().map(|h| h.value()).collect())
@@ -350,22 +327,10 @@ impl Document {
         }
     }
 
-    fn update<'py>(&self, py: Python<'py>, entity: &Bound<'py, PyAny>) -> PyResult<bool> {
+    fn update<'py>(&self, _py: Python<'py>, entity: &Bound<'py, PyAny>) -> PyResult<bool> {
         let entity = py_to_entity(entity)?;
         let sender = require_sender(self)?;
-        let interrupt: RefCell<Option<PyErr>> = RefCell::new(None);
-        let result = sender.request_with_poll(PluginRequest::UpdateEntity(entity), &mut || {
-            if let Err(e) = py.check_signals() {
-                *interrupt.borrow_mut() = Some(e);
-                return Err(ocs_plugin_api::host::PluginRequestError(
-                    "interrupted".to_string(),
-                ));
-            }
-            Ok(())
-        });
-        if let Some(e) = interrupt.into_inner() {
-            return Err(e);
-        }
+        let result = sender.request(PluginRequest::UpdateEntity(entity));
         match result {
             Ok(PluginResponse::Bool(b)) => Ok(b),
             Ok(other) => Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
@@ -377,26 +342,11 @@ impl Document {
         }
     }
 
-    fn remove<'py>(&self, py: Python<'py>, handle: u64) -> PyResult<bool> {
+    fn remove<'py>(&self, _py: Python<'py>, handle: u64) -> PyResult<bool> {
         let sender = require_sender(self)?;
-        let interrupt: RefCell<Option<PyErr>> = RefCell::new(None);
-        let result = sender.request_with_poll(
-            PluginRequest::RemoveEntity {
-                handle: Handle::new(handle),
-            },
-            &mut || {
-                if let Err(e) = py.check_signals() {
-                    *interrupt.borrow_mut() = Some(e);
-                    return Err(ocs_plugin_api::host::PluginRequestError(
-                        "interrupted".to_string(),
-                    ));
-                }
-                Ok(())
-            },
-        );
-        if let Some(e) = interrupt.into_inner() {
-            return Err(e);
-        }
+        let result = sender.request(PluginRequest::RemoveEntity {
+            handle: Handle::new(handle),
+        });
         match result {
             Ok(PluginResponse::Bool(b)) => Ok(b),
             Ok(other) => Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
@@ -417,25 +367,10 @@ impl Document {
         app_name: String,
     ) -> PyResult<Option<PyObject>> {
         let sender = require_sender(self)?;
-        let interrupt: RefCell<Option<PyErr>> = RefCell::new(None);
-        let result = sender.request_with_poll(
-            PluginRequest::ReadRecord {
-                handle: Handle::new(handle),
-                app_name,
-            },
-            &mut || {
-                if let Err(e) = py.check_signals() {
-                    *interrupt.borrow_mut() = Some(e);
-                    return Err(ocs_plugin_api::host::PluginRequestError(
-                        "interrupted".to_string(),
-                    ));
-                }
-                Ok(())
-            },
-        );
-        if let Some(e) = interrupt.into_inner() {
-            return Err(e);
-        }
+        let result = sender.request(PluginRequest::ReadRecord {
+            handle: Handle::new(handle),
+            app_name,
+        });
         match result {
             Ok(PluginResponse::Record(record)) => {
                 record.map(|r| xdata_record_to_py(py, &r)).transpose()
@@ -453,31 +388,16 @@ impl Document {
     /// `app_name` (str) and `values` (list of `{kind, value}` dicts).
     fn write_record<'py>(
         &self,
-        py: Python<'py>,
+        _py: Python<'py>,
         handle: u64,
         record: &Bound<'py, PyDict>,
     ) -> PyResult<bool> {
         let record = py_to_xdata_record(record)?;
         let sender = require_sender(self)?;
-        let interrupt: RefCell<Option<PyErr>> = RefCell::new(None);
-        let result = sender.request_with_poll(
-            PluginRequest::WriteRecord {
-                handle: Handle::new(handle),
-                record,
-            },
-            &mut || {
-                if let Err(e) = py.check_signals() {
-                    *interrupt.borrow_mut() = Some(e);
-                    return Err(ocs_plugin_api::host::PluginRequestError(
-                        "interrupted".to_string(),
-                    ));
-                }
-                Ok(())
-            },
-        );
-        if let Some(e) = interrupt.into_inner() {
-            return Err(e);
-        }
+        let result = sender.request(PluginRequest::WriteRecord {
+            handle: Handle::new(handle),
+            record,
+        });
         match result {
             Ok(PluginResponse::Bool(b)) => Ok(b),
             Ok(other) => Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
@@ -490,27 +410,12 @@ impl Document {
     }
 
     /// Remove the XDATA record for `app_name` from `handle`.
-    fn remove_record<'py>(&self, py: Python<'py>, handle: u64, app_name: String) -> PyResult<bool> {
+    fn remove_record<'py>(&self, _py: Python<'py>, handle: u64, app_name: String) -> PyResult<bool> {
         let sender = require_sender(self)?;
-        let interrupt: RefCell<Option<PyErr>> = RefCell::new(None);
-        let result = sender.request_with_poll(
-            PluginRequest::RemoveRecord {
-                handle: Handle::new(handle),
-                app_name,
-            },
-            &mut || {
-                if let Err(e) = py.check_signals() {
-                    *interrupt.borrow_mut() = Some(e);
-                    return Err(ocs_plugin_api::host::PluginRequestError(
-                        "interrupted".to_string(),
-                    ));
-                }
-                Ok(())
-            },
-        );
-        if let Some(e) = interrupt.into_inner() {
-            return Err(e);
-        }
+        let result = sender.request(PluginRequest::RemoveRecord {
+            handle: Handle::new(handle),
+            app_name,
+        });
         match result {
             Ok(PluginResponse::Bool(b)) => Ok(b),
             Ok(other) => Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
