@@ -308,7 +308,10 @@ fn spawn_wrapper_unix(
         .spawn()?
     };
 
-    Ok(ProcessGroup { pgid: child.id() })
+    Ok(ProcessGroup {
+        pid: child.id(),
+        pgid: child.id(),
+    })
 }
 
 /// Kill the process group created by [`spawn_wrapper`].
@@ -436,24 +439,35 @@ pub fn shutdown_group(_group: &ProcessGroup, _timeout: std::time::Duration) {}
 #[cfg(unix)]
 #[derive(Debug, Clone, Copy)]
 pub struct ProcessGroup {
+    /// The wrapper process id (also the process group leader).
+    pid: u32,
     pgid: u32,
 }
 
 #[cfg(unix)]
 impl ProcessGroup {
-    /// Process group id (equal to the child pid on Unix).
+    /// Process id of the immediate child wrapper.
     pub fn pid(&self) -> u32 {
-        self.pgid
+        self.pid
     }
 
-    /// Check whether at least one process in the group is still alive.
+    /// Check whether the wrapper child is still alive, reaping it if it has
+    /// already exited. This prevents zombie processes from being reported as
+    /// alive when the user closes the terminal.
     pub fn is_alive(&self) -> bool {
         unsafe {
-            let r = libc::kill(-(self.pgid as libc::pid_t), 0);
-            if r == 0 {
-                return true;
+            let mut status: libc::c_int = 0;
+            let r = libc::waitpid(self.pid as libc::pid_t, &mut status, libc::WNOHANG);
+            if r == self.pid as libc::pid_t {
+                // The wrapper has exited and been reaped.
+                return false;
             }
-            std::io::Error::last_os_error().kind() != std::io::ErrorKind::NotFound
+            if r < 0 {
+                // No child to wait for (ECHILD) or another error; treat as not alive.
+                return false;
+            }
+            // r == 0 means the wrapper is still running.
+            true
         }
     }
 }
