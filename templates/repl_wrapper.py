@@ -64,13 +64,15 @@ def start_plain_command():
 
 def find_terminal():
     candidates = [
-        "xterm",
-        "konsole",
-        "xfce4-terminal",
-        "gnome-terminal",
+        "cosmic-term",
+        "cosmic-terminal",
         "alacritty",
         "kitty",
         "wezterm",
+        "konsole",
+        "gnome-terminal",
+        "xfce4-terminal",
+        "xterm",
     ]
     for name in candidates:
         if shutil.which(name):
@@ -83,6 +85,10 @@ def find_terminal():
 
 
 def build_terminal_command(term, cmd):
+    if term == "cosmic-term":
+        return ["cosmic-term", "-e"] + cmd
+    if term == "cosmic-terminal":
+        return ["cosmic-terminal", "-e"] + cmd
     if term == "xterm":
         return ["xterm", "-e"] + cmd
     if term == "konsole":
