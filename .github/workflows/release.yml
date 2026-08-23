@@ -81,6 +81,22 @@ jobs:
           PYO3_PYTHON: python
         run: cargo build --release --locked
 
+      - name: Verify Linux plugin links libpython
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          so=target/release/libocs_python_repl.so
+          echo "Dynamic dependencies:"
+          readelf -d "$so" | grep -E 'NEEDED|RPATH|RUNPATH'
+          echo ""
+          echo "Python symbol check:"
+          if readelf -d "$so" | grep -q 'libpython'; then
+            echo "OK: $so links libpython"
+          else
+            echo "ERROR: $so does not link libpython; OCS runner will fail to load it on Linux"
+            exit 1
+          fi
+
       - name: Stage release asset
         shell: bash
         run: |
