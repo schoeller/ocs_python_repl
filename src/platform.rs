@@ -21,8 +21,8 @@ static PYTHON_EXE: OnceLock<Option<PathBuf>> = OnceLock::new();
 pub fn python_executable() -> std::io::Result<PathBuf> {
     if let Ok(p) = std::env::var("OCS_PYTHON_EXE") {
         let path = PathBuf::from(p);
-        if is_valid_python(&path) {
-            return Ok(path);
+        if let Some(resolved) = resolve_python_executable(&path) {
+            return Ok(resolved);
         }
     }
 
@@ -63,25 +63,30 @@ fn discover_python() -> Option<PathBuf> {
     {
         if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
             let base = PathBuf::from(local_app_data);
+            candidates.push(base.join(r"Programs\Python\Python314\python.exe"));
+            candidates.push(base.join(r"Programs\Python\Python313\python.exe"));
             candidates.push(base.join(r"Programs\Python\Python312\python.exe"));
             candidates.push(base.join(r"Programs\Python\Python311\python.exe"));
             candidates.push(base.join(r"Programs\Python\Python310\python.exe"));
             candidates.push(base.join(r"Programs\Python\Python39\python.exe"));
         }
+        candidates.push(PathBuf::from(r"C:\Python314\python.exe"));
+        candidates.push(PathBuf::from(r"C:\Python313\python.exe"));
         candidates.push(PathBuf::from(r"C:\Python312\python.exe"));
         candidates.push(PathBuf::from(r"C:\Python311\python.exe"));
         candidates.push(PathBuf::from(r"C:\Python310\python.exe"));
         candidates.push(PathBuf::from(r"C:\Python39\python.exe"));
     }
 
-    candidates.into_iter().find(|candidate| is_valid_python(candidate))
+    candidates.into_iter().find_map(|p| resolve_python_executable(&p))
 }
 
-/// Verify that `path` is a real Python interpreter and not the Microsoft Store
-/// alias stub. The stub prints a Store install message instead of running code.
-fn is_valid_python(path: &Path) -> bool {
+/// Verify that `path` is a real Python interpreter and return the resolved
+/// executable path. This resolves launchers like Windows `py.exe` to the actual
+/// `python.exe`, which is required for `CreateProcessW` on Windows.
+fn resolve_python_executable(path: &Path) -> Option<PathBuf> {
     if !path.is_file() {
-        return false;
+        return None;
     }
     let output = match Command::new(path)
         .arg("-c")
@@ -89,19 +94,27 @@ fn is_valid_python(path: &Path) -> bool {
         .output()
     {
         Ok(output) => output,
-        Err(_) => return false,
+        Err(_) => return None,
     };
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     // The Microsoft Store stub exits 0 but writes the Store message to stderr
     // and stdout is empty. A real Python prints its executable path to stdout.
-    if stdout.trim().is_empty() {
-        return false;
+    let resolved = stdout.trim();
+    if resolved.is_empty() {
+        return None;
     }
     if stderr.to_lowercase().contains("microsoft store") {
-        return false;
+        return None;
     }
-    true
+    let resolved = PathBuf::from(resolved);
+    if resolved.is_file() {
+        Some(resolved)
+    } else {
+        // Fall back to the candidate itself if the resolved path does not exist
+        // (e.g. a virtualenv shim that reports a nonexistent target).
+        Some(path.to_path_buf())
+    }
 }
 
 /// Directory containing the current executable.
