@@ -11,8 +11,12 @@ import traceback
 
 SESSION_DIR = os.path.dirname(os.path.abspath(__file__))
 PYTHON = sys.executable
-LOG_PATH = os.path.join(SESSION_DIR, "repl.log")
-STDERR_LOG_PATH = os.path.join(SESSION_DIR, "wrapper_stderr.log")
+
+# Keep wrapper diagnostics outside the session directory so they survive
+# ReplSession::Drop's cleanup of SESSION_DIR.
+_LOG_DIR = os.environ.get("TEMP", os.environ.get("TMPDIR", "/tmp"))
+LOG_PATH = os.path.join(_LOG_DIR, "ocs_repl_wrapper.log")
+STDERR_LOG_PATH = os.path.join(_LOG_DIR, "ocs_repl_wrapper_stderr.log")
 
 # Redirect the wrapper's Python-level stderr to a log file so the host can read
 # startup errors. On Windows the wrapper console is hidden from the start.

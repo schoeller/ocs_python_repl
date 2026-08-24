@@ -158,12 +158,7 @@ fn spawn_wrapper_windows(
     session_dir: &Path,
     env: &HashMap<String, String>,
 ) -> std::io::Result<ProcessGroup> {
-    use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, HANDLE};
-    use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
-    use windows_sys::Win32::Storage::FileSystem::{
-        CreateFileW, FILE_APPEND_DATA, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, FILE_SHARE_WRITE,
-        OPEN_ALWAYS,
-    };
+    use windows_sys::Win32::Foundation::{CloseHandle, GetLastError};
     use windows_sys::Win32::System::JobObjects::AssignProcessToJobObject;
     use windows_sys::Win32::System::Threading::{
         CreateProcessW, PROCESS_INFORMATION, STARTUPINFOW,
@@ -173,62 +168,27 @@ fn spawn_wrapper_windows(
     const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
     const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x01000000;
     const CREATE_UNICODE_ENVIRONMENT: u32 = 0x00000400;
-    const STARTF_USESTDHANDLES: u32 = 0x00000100;
 
     let app_name = to_wide_path(python);
     let args = to_wide("-u repl_wrapper.py");
     let env_block = make_env_block(env);
     let cwd_wide = to_wide_path(session_dir);
 
-    // Open a persistent stderr log outside the session directory so crash
-    // diagnostics survive `ReplSession::Drop`'s cleanup.
-    let stderr_log_path = std::env::temp_dir().join("ocs_repl_wrapper_stderr.log");
-    let stderr_log_wide = to_wide_path(&stderr_log_path);
-    let mut sa: SECURITY_ATTRIBUTES = unsafe { std::mem::zeroed() };
-    sa.nLength = std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32;
-    sa.bInheritHandle = 1; // the child must inherit this handle
-    let stderr_handle: HANDLE = unsafe {
-        CreateFileW(
-            stderr_log_wide.as_ptr(),
-            FILE_APPEND_DATA,
-            FILE_SHARE_READ | FILE_SHARE_WRITE,
-            &sa,
-            OPEN_ALWAYS,
-            FILE_ATTRIBUTE_NORMAL,
-            std::ptr::null_mut(),
-        )
-    };
-    let stderr_handle = if stderr_handle.is_null()
-        || stderr_handle == windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE
-    {
-        // If we cannot open the log, proceed without redirecting stderr; a
-        // missing diagnostic log is still better than failing to start.
-        std::ptr::null_mut()
-    } else {
-        stderr_handle
-    };
-
     let mut startup: STARTUPINFOW = unsafe { std::mem::zeroed() };
     startup.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
-    if !stderr_handle.is_null() {
-        startup.dwFlags = STARTF_USESTDHANDLES;
-        startup.hStdInput = std::ptr::null_mut();
-        startup.hStdOutput = std::ptr::null_mut();
-        startup.hStdError = stderr_handle;
-    }
 
     let mut proc_info: PROCESS_INFORMATION = unsafe { std::mem::zeroed() };
 
     // Helper: attempt CreateProcessW with the given creation flags. A fresh
     // command-line buffer is built each time because CreateProcessW may modify it.
-    let mut attempt = |flags: u32, inherit_handles: i32| unsafe {
+    let mut attempt = |flags: u32| unsafe {
         let mut cmdline = args.clone();
         CreateProcessW(
             app_name.as_ptr(),
             cmdline.as_mut_ptr(),
             std::ptr::null(),
             std::ptr::null(),
-            inherit_handles,
+            0,
             flags,
             env_block.as_ptr() as *const _,
             cwd_wide.as_ptr(),
@@ -237,27 +197,15 @@ fn spawn_wrapper_windows(
         )
     };
 
-    let inherit = if stderr_handle.is_null() { 0 } else { 1 };
     let mut ok = attempt(
         CREATE_NEW_CONSOLE
             | CREATE_NEW_PROCESS_GROUP
             | CREATE_BREAKAWAY_FROM_JOB
             | CREATE_UNICODE_ENVIRONMENT,
-        inherit,
     );
     if ok == 0 {
         // Parent job may disallow breakaway; retry without that flag.
-        ok = attempt(
-            CREATE_NEW_CONSOLE | CREATE_NEW_PROCESS_GROUP | CREATE_UNICODE_ENVIRONMENT,
-            inherit,
-        );
-    }
-
-    // The child now owns the handle reference; close our copy.
-    if !stderr_handle.is_null() {
-        unsafe {
-            let _ = CloseHandle(stderr_handle);
-        }
+        ok = attempt(CREATE_NEW_CONSOLE | CREATE_NEW_PROCESS_GROUP | CREATE_UNICODE_ENVIRONMENT);
     }
 
     if ok == 0 {
