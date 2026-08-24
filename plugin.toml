@@ -9,5 +9,4 @@ command_prefixes = ["PYTHONSHELL"]
 xdata_apps = ["PYREPL"]
 
 [opencad]
-acadrust_version = ""
 acadrust_source = ""

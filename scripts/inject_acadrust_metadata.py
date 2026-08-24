@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Inject the resolved `acadrust` fingerprint into a staged `plugin.toml`.
 
-This script reads `Cargo.lock`, extracts the `acadrust` version and full git
-source that the `ocs_python_repl` package resolves to, and rewrites the given
-`plugin.toml` to set `acadrust_version` and `acadrust_source` under `[opencad]`.
+This script reads `Cargo.lock`, extracts the full git source that the
+`ocs_python_repl` package resolves to, and rewrites the given `plugin.toml` to
+set `acadrust_source` under `[opencad]`.
 
 Usage:
     python scripts/inject_acadrust_metadata.py dist/plugin.toml
@@ -54,8 +54,6 @@ def direct_dependency_sources(packages: dict, package_name: str) -> dict[str, st
                 line = line.strip().rstrip(",")
                 if not line:
                     continue
-                # Entries look like 'acadrust 0.4.1 (git+https://...?rev=...#...)'
-                # or just 'foo x.y.z' or 'foo'.
                 line = line.strip('"')
                 m2 = re.match(
                     r'^(?P<name>[a-zA-Z0-9_-]+)'
@@ -69,8 +67,8 @@ def direct_dependency_sources(packages: dict, package_name: str) -> dict[str, st
     raise SystemExit(f"could not find {package_name} package in Cargo.lock")
 
 
-def find_acadrust_package(packages: dict) -> tuple[str, str]:
-    """Return (version, source) for the acadrust package used by ocs_python_repl."""
+def find_acadrust_source(packages: dict) -> str:
+    """Return the source string for the acadrust package used by ocs_python_repl."""
     deps = direct_dependency_sources(packages, "ocs_python_repl")
     acadrust_source = deps.get("acadrust", "")
 
@@ -78,8 +76,6 @@ def find_acadrust_package(packages: dict) -> tuple[str, str]:
         key for key in packages if key[0] == "acadrust" and key[2] == acadrust_source
     ]
     if not candidates and acadrust_source:
-        # Cargo sometimes normalises the source slightly; fall back to any
-        # acadrust package whose source contains the same rev hash.
         m = re.search(r"#([0-9a-f]{40})", acadrust_source)
         if m:
             full_hash = m.group(1)
@@ -89,27 +85,19 @@ def find_acadrust_package(packages: dict) -> tuple[str, str]:
                 if key[0] == "acadrust" and key[2] and full_hash in key[2]
             ]
     if not candidates:
-        # Last resort: any acadrust package with a git source.
-        candidates = [
-            key for key in packages if key[0] == "acadrust" and key[2]
-        ]
+        candidates = [key for key in packages if key[0] == "acadrust" and key[2]]
     if not candidates:
         raise SystemExit("no acadrust package found in Cargo.lock")
 
-    key = candidates[0]
-    return key[1], key[2]
+    return candidates[0][2]
 
 
 def set_toml_value(text: str, section: str, key: str, value: str) -> str:
     """Set a key inside a TOML section, adding the section/key if needed."""
-    # Match the section header.
     section_pattern = re.compile(rf'^\[{re.escape(section)}\]\s*$', re.M)
     if not section_pattern.search(text):
-        # Append the section at the end.
         text = text.rstrip() + f"\n\n[{section}]\n"
 
-    # Match 'key = "..."' inside the section. We assume the section ends at the
-    # next section header or EOF.
     def section_end(start: int) -> int:
         next_section = re.search(r'^\[', text[start:], re.M)
         if next_section:
@@ -143,14 +131,13 @@ def main() -> int:
 
     lock_text = read_cargo_lock(lock_path)
     packages = parse_packages(lock_text)
-    version, source = find_acadrust_package(packages)
+    source = find_acadrust_source(packages)
 
     toml_text = plugin_toml_path.read_text(encoding="utf-8")
-    toml_text = set_toml_value(toml_text, "opencad", "acadrust_version", version)
     toml_text = set_toml_value(toml_text, "opencad", "acadrust_source", source)
     plugin_toml_path.write_text(toml_text, encoding="utf-8")
 
-    print(f"injected acadrust {version}@{source}")
+    print(f"injected acadrust {source}")
     return 0
 
 
