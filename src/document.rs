@@ -96,6 +96,12 @@ impl Document {
     #[new]
     #[pyo3(signature = (snapshot_path))]
     pub fn new(snapshot_path: String) -> PyResult<Self> {
+        if snapshot_path.trim().is_empty() {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "OCS_V4_SNAPSHOT is empty; the host did not publish a document view for this tab"
+                    .to_string(),
+            ));
+        }
         debug_log(&format!(
             "[python-repl] Document::new opening snapshot: {} (size {:?})",
             snapshot_path,
