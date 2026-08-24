@@ -1,9 +1,13 @@
 [plugin]
 id = "opencad.python_repl"
 name = "Python REPL"
-version = "0.1.13"
+version = "0.1.14"
 description = "Interactive Python REPL for Open CAD Studio."
 api_version = 4
 ribbon_order = 70
 command_prefixes = ["PYTHONSHELL"]
 xdata_apps = ["PYREPL"]
+
+[opencad]
+acadrust_version = ""
+acadrust_source = ""

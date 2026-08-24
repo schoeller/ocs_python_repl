@@ -75,6 +75,19 @@ jobs:
         with:
           python-version: '3.12'
 
+      # The upstream v0.9.7 tag pins an older acadrust revision than the
+      # current host. Patch to upstream main for this build so the plugin and
+      # the host share one acadrust ABI.
+      - name: Patch ocs_plugin_api to upstream main
+        shell: bash
+        run: |
+          cat >> Cargo.toml <<'EOF'
+
+          [patch."https://github.com/HakanSeven12/OpenCADStudio"]
+          ocs_plugin_api = { git = "https://github.com/HakanSeven12/OpenCADStudio", rev = "1fb770fb150c2ee340570b56980e1cfdaf68d2da" }
+          EOF
+          cargo update
+
       - name: Build release cdylib
         shell: bash
         env:
@@ -105,6 +118,12 @@ jobs:
           # the host loader accepts any name with the right extension.
           cp target/release/*.${{ matrix.ext }} "dist/${{ matrix.asset }}"
           cp plugin.toml dist/plugin.toml
+
+      # Rewrite the staged plugin.toml with the exact acadrust revision the
+      # release was built against so the host can verify ABI compatibility
+      # before loading any native code.
+      - name: Inject acadrust fingerprint into plugin.toml
+        run: python scripts/inject_acadrust_metadata.py dist/plugin.toml
 
       - uses: softprops/action-gh-release@v3
         with:
