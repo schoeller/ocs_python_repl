@@ -1,6 +1,6 @@
 [package]
 name = "ocs_python_repl"
-version = "0.1.14"
+version = "0.1.15"
 edition = "2021"
 description = "Python REPL plugin for Open CAD Studio (API v4)."
 license = "GPL-3.0-only"
@@ -17,15 +17,15 @@ default = []
 # This is useful for debugging OOM aborts but adds overhead to every allocation.
 alloc-debug = []
 
-# The upstream Open CAD Studio tag this plugin is pinned to.
+# The upstream Open CAD Studio revision this plugin is pinned to.
 # The repin workflow reads this file, fetches the upstream Cargo.lock at that
-# tag, and rewrites the dependency pins below. Do not edit the dependency lines
-# by hand; run `scripts/repin.py` (or the `repin` GitHub Actions workflow).
+# revision, and rewrites the dependency pins below. Do not edit the dependency
+# lines by hand; run `scripts/repin.py` (or the `repin` GitHub Actions workflow).
 [package.metadata.upstream]
-tag = "v0.9.7"
+rev = "1fb770fb150c2ee340570b56980e1cfdaf68d2da"
 
 [dependencies]
-ocs_plugin_api = { git = "https://github.com/HakanSeven12/OpenCADStudio", tag = "v0.9.7", features = ["host"] }
+ocs_plugin_api = { git = "https://github.com/HakanSeven12/OpenCADStudio", rev = "1fb770fb150c2ee340570b56980e1cfdaf68d2da", features = ["host"] }
 acadrust = { git = "https://github.com/HakanSeven12/cadcodec.git", rev = "94df2c3", features = ["serde"] }
 serde = { version = "=1.0.228", features = ["derive"] }
 serde_json = { version = "=1.0.150" }
@@ -52,7 +52,7 @@ windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Syst
 
 [build-dependencies]
 # Must stay in sync with the runtime dependency above.
-ocs_plugin_api = { git = "https://github.com/HakanSeven12/OpenCADStudio", tag = "v0.9.7", features = ["host"] }
+ocs_plugin_api = { git = "https://github.com/HakanSeven12/OpenCADStudio", rev = "1fb770fb150c2ee340570b56980e1cfdaf68d2da", features = ["host"] }
 serde = { version = "=1.0.228", features = ["derive"] }
 serde_json = { version = "=1.0.150" }
 # PyO3's extension-module feature intentionally does not link libpython on Unix.

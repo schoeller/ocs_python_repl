@@ -5,29 +5,6 @@ version = 4
 [[package]]
 name = "acadrust"
 version = "0.4.1"
-source = "git+https://github.com/HakanSeven12/cadcodec.git?rev=0908da7#0908da7b6e4f702a6c78359a57f53e2b79cf39eb"
-dependencies = [
- "ahash 0.8.12",
- "anyhow",
- "bitflags",
- "byteorder",
- "encoding_rs",
- "flate2",
- "indexmap",
- "itoa",
- "memmap2",
- "nom",
- "once_cell",
- "rayon",
- "ryu",
- "serde",
- "thiserror",
- "web-time",
-]
-
-[[package]]
-name = "acadrust"
-version = "0.4.1"
 source = "git+https://github.com/HakanSeven12/cadcodec.git?rev=94df2c3#94df2c3f87fa051b16ffc3923f80e9247c85c5fd"
 dependencies = [
  "ahash 0.8.12",
@@ -605,9 +582,9 @@ dependencies = [
 [[package]]
 name = "ocs_plugin_api"
 version = "0.2.0"
-source = "git+https://github.com/HakanSeven12/OpenCADStudio?tag=v0.9.7#6317de2caa596bd2a8e898dab9019ba2667b0611"
+source = "git+https://github.com/HakanSeven12/OpenCADStudio?rev=1fb770fb150c2ee340570b56980e1cfdaf68d2da#1fb770fb150c2ee340570b56980e1cfdaf68d2da"
 dependencies = [
- "acadrust 0.4.1 (git+https://github.com/HakanSeven12/cadcodec.git?rev=0908da7)",
+ "acadrust",
  "bincode",
  "cargo-lock",
  "getrandom 0.2.17",
@@ -623,9 +600,9 @@ dependencies = [
 
 [[package]]
 name = "ocs_python_repl"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
- "acadrust 0.4.1 (git+https://github.com/HakanSeven12/cadcodec.git?rev=94df2c3)",
+ "acadrust",
  "anyhow",
  "bincode",
  "getrandom 0.2.17",

@@ -8,15 +8,18 @@ name: repin
 # `slice::from_raw_parts` / ABI crash seen when the plugin and host were built
 # from different commits.
 #
-# The single source of truth for the upstream tag is `.upstream-tag` at the
-# repository root. This workflow reads that file, fetches the upstream Cargo.lock
-# at the corresponding tag, and rewrites `Cargo.toml` (and `Cargo.lock`) with the
+# The single source of truth for the upstream pin is `.upstream-tag` at the
+# repository root. It may contain either a release tag (e.g. `v0.9.7`) or a full
+# git revision. This workflow reads that file, fetches the upstream Cargo.lock at
+# the corresponding ref, and rewrites `Cargo.toml` (and `Cargo.lock`) with the
 # matching dependency pins. Manual re-pins can be done with `scripts/repin.py`.
 #
 # Two entry points:
 #
 #   schedule (cron)     — nightly check against the latest upstream release.
-#   workflow_dispatch   — manual re-pin to a chosen upstream tag, or a dry run.
+#                         If the current pin is a git revision, the cron job
+#                         does not auto-repin; use workflow_dispatch instead.
+#   workflow_dispatch   — manual re-pin to a chosen upstream tag or rev, or a dry run.
 on:
   schedule:
     - cron: "17 6 * * *"
@@ -45,7 +48,7 @@ jobs:
       tag: ${{ steps.check.outputs.tag }}
     steps:
       - uses: actions/checkout@v5
-      - name: Compare desired upstream tag against the current pin
+      - name: Compare desired upstream ref against the current pin
         id: check
         env:
           GH_TOKEN: ${{ github.token }}
@@ -55,45 +58,55 @@ jobs:
         run: |
           set -euo pipefail
 
-          CURRENT_TAG=$(cat .upstream-tag | tr -d '[:space:]')
+          CURRENT_REF=$(cat .upstream-tag | tr -d '[:space:]')
+          # Treat 7+ hex chars as a git revision; everything else is a tag.
+          IS_SHA=0
+          if [[ "$CURRENT_REF" =~ ^[0-9a-fA-F]{7,}$ ]]; then
+            IS_SHA=1
+          fi
 
           if [ -n "$INPUT_TAG" ]; then
             # Manual workflow_dispatch override.
-            TAG="$INPUT_TAG"
-            echo "using workflow_dispatch tag=$TAG"
+            REF="$INPUT_TAG"
+            echo "using workflow_dispatch ref=$REF"
           elif [ "$EVENT_NAME" = "schedule" ]; then
+            if [ "$IS_SHA" = "1" ]; then
+              echo "current pin is a revision ($CURRENT_REF); skipping automatic cron repin"
+              echo "repin=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
             # Nightly poll: compare the latest upstream release to our pin.
-            TAG=$(gh api "repos/$UPSTREAM/releases/latest" --jq .tag_name)
-            echo "cron poll: latest upstream release=$TAG; current pin=$CURRENT_TAG"
+            REF=$(gh api "repos/$UPSTREAM/releases/latest" --jq .tag_name)
+            echo "cron poll: latest upstream release=$REF; current pin=$CURRENT_REF"
           else
             # Fallback: re-pin to the current .upstream-tag value (useful for dry runs).
-            TAG="$CURRENT_TAG"
-            echo "fallback: using current .upstream-tag=$TAG"
+            REF="$CURRENT_REF"
+            echo "fallback: using current .upstream-tag=$REF"
           fi
 
-          # Validate the tag exists upstream and resolve its commit SHA.
-          SHA=$(gh api "repos/$UPSTREAM/commits/$TAG" --jq .sha)
-          echo "desired upstream tag=$TAG ($SHA); current pinned tag=$CURRENT_TAG"
+          # Validate the ref exists upstream and resolve its commit SHA.
+          SHA=$(gh api "repos/$UPSTREAM/commits/$REF" --jq .sha)
+          echo "desired upstream ref=$REF ($SHA); current pinned ref=$CURRENT_REF"
 
-          if [ "$TAG" = "$CURRENT_TAG" ] && [ "$DRY_RUN" != "true" ]; then
+          if [ "$REF" = "$CURRENT_REF" ] && [ "$DRY_RUN" != "true" ]; then
             echo "Pin is current — nothing to do."
             echo "repin=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          if [ "$TAG" = "$CURRENT_TAG" ]; then
+          if [ "$REF" = "$CURRENT_REF" ]; then
             echo "::notice::dry run against the current pin — gates will run, nothing will ship."
           fi
 
           if [ "$DRY_RUN" != "true" ] \
-             && git ls-remote --exit-code origin "refs/heads/repin/$TAG" >/dev/null 2>&1; then
-            echo "Branch repin/$TAG already exists — PR pending or handled."
+             && git ls-remote --exit-code origin "refs/heads/repin/$REF" >/dev/null 2>&1; then
+            echo "Branch repin/$REF already exists — PR pending or handled."
             echo "repin=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
           echo "repin=true" >> "$GITHUB_OUTPUT"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "tag=$REF" >> "$GITHUB_OUTPUT"
 
   repin:
     needs: detect
@@ -230,7 +243,7 @@ jobs:
                   return url, m.group(1)
               raise SystemExit("could not find acadrust dependency in ocs_plugin_api/Cargo.toml")
 
-          # ocs_plugin_api lives in the upstream repo itself, so pin by tag.
+          # ocs_plugin_api lives in the upstream repo itself, so pin by the same ref.
           ocs_api_url = f"https://github.com/{UPSTREAM}"
 
           # acadrust is a separate git repo; pin to the exact upstream rev form.
@@ -239,15 +252,23 @@ jobs:
           cargo_path = "Cargo.toml"
           cargo = open(cargo_path).read()
 
-          # Replace the metadata tag.
+          def is_sha(ref):
+              return len(ref) >= 7 and all(c in "0123456789abcdef" for c in ref.lower())
+
+          def metadata_key(ref):
+              return "rev" if is_sha(ref) else "tag"
+
+          key = metadata_key(TAG)
+
+          # Replace the metadata ref (tag or rev).
           cargo, n = re.subn(
-              r'^(\[package\.metadata\.upstream\]\s*\n^tag = ")[^"]+("\s*)$',
+              rf'^(\[package\.metadata\.upstream\]\s*\n^{key} = ")[^"]+("\s*)$',
               rf'\g<1>{TAG}\g<2>',
               cargo,
               flags=re.M,
           )
           if n != 1:
-              raise SystemExit(f"expected 1 upstream metadata tag to rewrite, rewrote {n}")
+              raise SystemExit(f"expected 1 upstream metadata {key} to rewrite, rewrote {n}")
 
           def replace_dep(cargo, name, new_value):
               pattern = rf'^{name} = \{{[^}}]+\}}'
@@ -256,8 +277,8 @@ jobs:
                   raise SystemExit(f"dependency {name} not found in Cargo.toml")
               return cargo
 
-          # ocs_plugin_api: git by tag, both runtime and build-dep.
-          ocs_api_value = f'{{ git = "{ocs_api_url}", tag = "{TAG}", features = ["host"] }}'
+          # ocs_plugin_api: git by tag or rev, both runtime and build-dep.
+          ocs_api_value = f'{{ git = "{ocs_api_url}", {key} = "{TAG}", features = ["host"] }}'
           cargo = replace_dep(cargo, "ocs_plugin_api", ocs_api_value)
 
           # acadrust: git by rev.

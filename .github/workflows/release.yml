@@ -75,19 +75,8 @@ jobs:
         with:
           python-version: '3.12'
 
-      # The upstream v0.9.7 tag pins an older acadrust revision than the
-      # current host. Patch to upstream main for this build so the plugin and
-      # the host share one acadrust ABI.
-      - name: Patch ocs_plugin_api to upstream main
-        shell: bash
-        run: |
-          cat >> Cargo.toml <<'EOF'
-
-          [patch."https://github.com/HakanSeven12/OpenCADStudio"]
-          ocs_plugin_api = { git = "https://github.com/HakanSeven12/OpenCADStudio", rev = "1fb770fb150c2ee340570b56980e1cfdaf68d2da" }
-          EOF
-          cargo update
-
+      # Cargo.toml is the single source of truth for upstream pins; the release
+      # build must not patch or override dependency declarations.
       - name: Build release cdylib
         shell: bash
         env:

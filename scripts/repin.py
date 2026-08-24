@@ -1,19 +1,20 @@
 #!/usr/bin/env python3
-"""Re-pin ocs_python_repl dependencies to match an upstream OpenCADStudio tag.
+"""Re-pin ocs_python_repl dependencies to match an upstream OpenCADStudio ref.
 
-The single source of truth for the upstream tag is `.upstream-tag` at the
-repository root. This script fetches the upstream `Cargo.lock` at that tag and
+The single source of truth for the upstream ref is `.upstream-tag` at the
+repository root. It may contain either a release tag (e.g. `v0.9.7`) or a full
+git revision. This script fetches the upstream `Cargo.lock` at that ref and
 rewrites `Cargo.toml` with matching pins for:
 
-- ocs_plugin_api (git tag)
+- ocs_plugin_api (git tag or rev)
 - acadrust (git rev)
 - serde, serde_json, bincode, memmap2, anyhow, getrandom, libc, windows-sys
   (registry exact versions)
 
 Usage:
-    python scripts/repin.py [v0.9.6]
+    python scripts/repin.py [v0.9.6 | 1fb770fb...]
 
-If no tag is given, the value from `.upstream-tag` is used. The script does not
+If no ref is given, the value from `.upstream-tag` is used. The script does not
 commit, tag, or push; it only updates the local files.
 """
 
@@ -29,14 +30,14 @@ LOCK_URL = f"https://raw.githubusercontent.com/{UPSTREAM}/{{tag}}/Cargo.lock"
 API_TOML_URL = f"https://raw.githubusercontent.com/{UPSTREAM}/{{tag}}/crates/ocs_plugin_api/Cargo.toml"
 
 
-def read_upstream_tag(path: Path) -> str:
+def read_upstream_ref(path: Path) -> str:
     text = path.read_text(encoding="utf-8").strip()
     # Accept the first non-empty, non-comment line.
     for line in text.splitlines():
         line = line.split("#", 1)[0].strip()
         if line:
             return line
-    raise SystemExit(f"no upstream tag found in {path}")
+    raise SystemExit(f"no upstream ref found in {path}")
 
 
 def fetch_url(url: str) -> str:
@@ -146,15 +147,23 @@ def replace_dep(cargo: str, name: str, new_value: str) -> str:
     return cargo
 
 
+def is_sha(ref: str) -> bool:
+    return len(ref) >= 7 and all(c in "0123456789abcdef" for c in ref.lower())
+
+
+def metadata_key(ref: str) -> str:
+    return "rev" if is_sha(ref) else "tag"
+
+
 def main() -> int:
     repo_root = Path(__file__).resolve().parent.parent
-    tag_path = repo_root / ".upstream-tag"
+    ref_path = repo_root / ".upstream-tag"
 
-    tag = sys.argv[1] if len(sys.argv) > 1 else read_upstream_tag(tag_path)
-    print(f"re-pinning to upstream tag {tag}")
+    ref = sys.argv[1] if len(sys.argv) > 1 else read_upstream_ref(ref_path)
+    print(f"re-pinning to upstream ref {ref}")
 
-    lock_text = fetch_lock(tag)
-    api_toml_text = fetch_api_toml(tag)
+    lock_text = fetch_lock(ref)
+    api_toml_text = fetch_api_toml(ref)
     packages = {name: (ver, src) for name, ver, src in lock_packages(lock_text)}
     direct_deps = upstream_direct_deps(lock_text)
 
@@ -163,18 +172,19 @@ def main() -> int:
     cargo_path = repo_root / "Cargo.toml"
     cargo = cargo_path.read_text(encoding="utf-8")
 
-    # Update the metadata tag.
+    # Update the metadata ref (tag or rev).
+    key = metadata_key(ref)
     cargo, n = re.subn(
-        r'^(\[package\.metadata\.upstream\]\s*\n^tag = ")[^"]+("\s*)$',
-        rf'\g<1>{tag}\g<2>',
+        rf'^(\[package\.metadata\.upstream\]\s*\n^{key} = ")[^"]+("\s*)$',
+        rf'\g<1>{ref}\g<2>',
         cargo,
         flags=re.M,
     )
     if n != 1:
-        raise SystemExit(f"expected 1 upstream metadata tag to rewrite, rewrote {n}")
+        raise SystemExit(f"expected 1 upstream metadata {key} to rewrite, rewrote {n}")
 
-    # ocs_plugin_api: git by tag.
-    ocs_api_value = f'{{ git = "{UPSTREAM_URL}", tag = "{tag}", features = ["host"] }}'
+    # ocs_plugin_api: git by tag or rev.
+    ocs_api_value = f'{{ git = "{UPSTREAM_URL}", {key} = "{ref}", features = ["host"] }}'
     cargo = replace_dep(cargo, "ocs_plugin_api", ocs_api_value)
 
     # acadrust: git by rev.
@@ -204,10 +214,10 @@ def main() -> int:
         cargo = replace_dep(cargo, dep_name, dep_value)
 
     cargo_path.write_text(cargo, encoding="utf-8")
-    tag_path.write_text(tag + "\n", encoding="utf-8")
+    ref_path.write_text(ref + "\n", encoding="utf-8")
 
     print("updated Cargo.toml and .upstream-tag")
-    print(f"  ocs_plugin_api -> {tag}")
+    print(f"  ocs_plugin_api -> {ref}")
     print(f"  acadrust       -> {acad_url}@{acad_rev[:7]}")
     for dep_name in registry_pins:
         print(f"  {dep_name:<15} -> {pkg_version(packages, direct_deps, dep_name)}")
