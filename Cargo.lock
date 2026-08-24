@@ -600,7 +600,7 @@ dependencies = [
 
 [[package]]
 name = "ocs_python_repl"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "acadrust",
  "anyhow",
