@@ -45,11 +45,10 @@ fn parse_token(s: String) -> Option<[u8; PROXY_TOKEN_LEN]> {
 /// Deserialize a bincode-encoded entity with a byte limit so a corrupted
 /// internal length cannot allocate an unbounded amount of memory.
 ///
-/// IMPORTANT: `EntityViewV4::from` in the host serializes entities with
-/// `bincode::serialize`, which uses **fixed-width** integer encoding. The
-/// default `DefaultOptions::new()` uses variable-width (varint) encoding, so
-/// we must explicitly request fixed-width decoding or the fields will be
-/// misread.
+/// The host serializes entities with `bincode::serialize`, which uses
+/// **fixed-width** integer encoding. The `DefaultOptions::new()` helper uses
+/// variable-width (varint) encoding, so we must explicitly request fixed-width
+/// decoding or the fields will be misread.
 fn deserialize_entity(data: &[u8]) -> bincode::Result<EntityType> {
     bincode::DefaultOptions::new()
         .with_fixint_encoding()
@@ -430,6 +429,36 @@ impl Document {
             Err(e) => Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
                 PluginRequestError::to_string(&e),
             )),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use acadrust::entities::Point;
+
+    #[test]
+    fn deserialize_entity_matches_host_fixint_encoding() {
+        let mut p = Point::from_coords(1.0, 2.0, 3.0);
+        p.common.handle = Handle::new(98);
+        let entity = EntityType::Point(p);
+        let bytes = bincode::serialize(&entity).expect("serialize point");
+        let preview: String = bytes
+            .iter()
+            .take(16)
+            .map(|b| format!("{:02x}", b))
+            .collect::<Vec<_>>()
+            .join(" ");
+        eprintln!("serialized bytes preview: {preview}");
+        let decoded = deserialize_entity(&bytes).expect("deserialize_entity should match bincode::serialize");
+        if let EntityType::Point(q) = decoded {
+            assert_eq!(q.common.handle.value(), 98);
+            assert!((q.location.x - 1.0).abs() < 1e-9);
+            assert!((q.location.y - 2.0).abs() < 1e-9);
+            assert!((q.location.z - 3.0).abs() < 1e-9);
+        } else {
+            panic!("decoded wrong entity kind");
         }
     }
 }
