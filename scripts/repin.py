@@ -24,6 +24,10 @@ import sys
 import urllib.request
 from pathlib import Path
 
+
+def log(msg: str) -> None:
+    print(msg, file=sys.stderr)
+
 UPSTREAM = "HakanSeven12/OpenCADStudio"
 UPSTREAM_URL = f"https://github.com/{UPSTREAM}"
 LOCK_URL = f"https://raw.githubusercontent.com/{UPSTREAM}/{{tag}}/Cargo.lock"
@@ -37,11 +41,12 @@ def read_upstream_ref(path: Path) -> str:
         line = line.split("#", 1)[0].strip()
         if line:
             return line
-    raise SystemExit(f"no upstream ref found in {path}")
+    log(f"no upstream ref found in {path}")
+    raise SystemExit(1)
 
 
 def fetch_url(url: str) -> str:
-    print(f"fetching {url}")
+    log(f"fetching {url}")
     with urllib.request.urlopen(url, timeout=60) as resp:
         return resp.read().decode("utf-8")
 
@@ -152,7 +157,7 @@ def main() -> int:
     env_mode = "--env" in sys.argv
     args = [a for a in sys.argv[1:] if a != "--env"]
     ref = args[0] if args else read_upstream_ref(ref_path)
-    print(f"re-pinning to upstream ref {ref}")
+    log(f"re-pinning to upstream ref {ref}")
 
     lock_text = fetch_lock(ref)
     api_toml_text = fetch_api_toml(ref)
@@ -209,13 +214,15 @@ def main() -> int:
     cargo_path.write_text(cargo, encoding="utf-8")
     ref_path.write_text(ref + "\n", encoding="utf-8")
 
-    print("updated Cargo.toml and .upstream-tag")
-    print(f"  ocs_plugin_api -> {ref}")
-    print(f"  acadrust       -> {acad_url}@{acad_rev[:7]}")
+    log("updated Cargo.toml and .upstream-tag")
+    log(f"  ocs_plugin_api -> {ref}")
+    log(f"  acadrust       -> {acad_url}@{acad_rev[:7]}")
     for dep_name in registry_pins:
-        print(f"  {dep_name:<15} -> {pkg_version(packages, direct_deps, dep_name)}")
+        log(f"  {dep_name:<15} -> {pkg_version(packages, direct_deps, dep_name)}")
 
     if env_mode:
+        # Only KEY=VALUE lines go to stdout so this script can be redirected to
+        # $GITHUB_ENV without GitHub's env-file parser rejecting log lines.
         print(f"HOST_TAG={ref}")
         print(f"ACADRUST_URL={acad_url}")
         print(f"ACADRUST_REV={acad_rev}")
