@@ -70,8 +70,8 @@ The `repin` workflow automates the logic in `scripts/repin.py` and adds validati
 
 | Trigger | Purpose |
 |---|---|
-| `schedule: 17 6 * * *` | Nightly poll of the latest upstream release |
-| `workflow_dispatch` | Manual re-pin, optionally to a specific tag or as a dry run |
+| `schedule: 17 6 * * *` | Nightly poll of the latest upstream release. The current pin is always overwritten with the latest release tag, even if it was previously a git revision. |
+| `workflow_dispatch` | Manual re-pin, optionally to a specific tag or as a dry run. |
 
 ### Jobs
 
@@ -79,10 +79,10 @@ The `repin` workflow automates the logic in `scripts/repin.py` and adds validati
 
 - Reads the current `.upstream-tag`.
 - Determines the desired upstream tag:
-  - Cron: queries `repos/HakanSeven12/OpenCADStudio/releases/latest` via the GitHub CLI.
+  - Cron: queries `repos/HakanSeven12/OpenCADStudio/releases/latest` via the GitHub CLI. The latest release tag always becomes the new pin, even if `.upstream-tag` currently holds a git revision.
   - Manual: uses the tag supplied to `workflow_dispatch`.
-- Resolves the upstream tag to a commit SHA.
-- Skips if the pin is already current (unless `dry_run` is true).
+- Resolves both the current pin and the desired tag to commit SHAs.
+- Skips only if both resolve to the same commit (unless `dry_run` is true).
 - Skips if a `repin/<tag>` branch already exists (indicating a pending PR).
 - Outputs `repin=true` and the target tag when work is needed.
 

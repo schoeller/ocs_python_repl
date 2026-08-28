@@ -17,8 +17,8 @@ name: repin
 # Two entry points:
 #
 #   schedule (cron)     — nightly check against the latest upstream release.
-#                         If the current pin is a git revision, the cron job
-#                         does not auto-repin; use workflow_dispatch instead.
+#                         The current pin is always overwritten with the latest
+#                         release tag, even if it was previously a git revision.
 #   workflow_dispatch   — manual re-pin to a chosen upstream tag or rev, or a dry run.
 on:
   schedule:
@@ -59,23 +59,13 @@ jobs:
           set -euo pipefail
 
           CURRENT_REF=$(cat .upstream-tag | tr -d '[:space:]')
-          # Treat 7+ hex chars as a git revision; everything else is a tag.
-          IS_SHA=0
-          if [[ "$CURRENT_REF" =~ ^[0-9a-fA-F]{7,}$ ]]; then
-            IS_SHA=1
-          fi
 
           if [ -n "$INPUT_TAG" ]; then
             # Manual workflow_dispatch override.
             REF="$INPUT_TAG"
             echo "using workflow_dispatch ref=$REF"
           elif [ "$EVENT_NAME" = "schedule" ]; then
-            if [ "$IS_SHA" = "1" ]; then
-              echo "current pin is a revision ($CURRENT_REF); skipping automatic cron repin"
-              echo "repin=false" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-            # Nightly poll: compare the latest upstream release to our pin.
+            # Nightly poll: always adopt the latest upstream release tag.
             REF=$(gh api "repos/$UPSTREAM/releases/latest" --jq .tag_name)
             echo "cron poll: latest upstream release=$REF; current pin=$CURRENT_REF"
           else
@@ -84,17 +74,20 @@ jobs:
             echo "fallback: using current .upstream-tag=$REF"
           fi
 
-          # Validate the ref exists upstream and resolve its commit SHA.
-          SHA=$(gh api "repos/$UPSTREAM/commits/$REF" --jq .sha)
-          echo "desired upstream ref=$REF ($SHA); current pinned ref=$CURRENT_REF"
+          # Resolve both refs to commit SHAs so a tag and the revision it points
+          # to are treated as the same pin.
+          CURRENT_SHA=$(gh api "repos/$UPSTREAM/commits/$CURRENT_REF" --jq .sha)
+          DESIRED_SHA=$(gh api "repos/$UPSTREAM/commits/$REF" --jq .sha)
+          echo "current pin $CURRENT_REF -> $CURRENT_SHA"
+          echo "desired ref $REF -> $DESIRED_SHA"
 
-          if [ "$REF" = "$CURRENT_REF" ] && [ "$DRY_RUN" != "true" ]; then
-            echo "Pin is current — nothing to do."
+          if [ "$DESIRED_SHA" = "$CURRENT_SHA" ] && [ "$DRY_RUN" != "true" ]; then
+            echo "Pin is current ($CURRENT_REF -> $DESIRED_SHA) — nothing to do."
             echo "repin=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          if [ "$REF" = "$CURRENT_REF" ]; then
+          if [ "$DESIRED_SHA" = "$CURRENT_SHA" ]; then
             echo "::notice::dry run against the current pin — gates will run, nothing will ship."
           fi
 
@@ -258,17 +251,18 @@ jobs:
           def metadata_key(ref):
               return "rev" if is_sha(ref) else "tag"
 
+          # Replace the metadata ref (tag or rev). The existing key may differ
+          # from the new one (e.g. switching from a pinned revision to a release tag).
           key = metadata_key(TAG)
 
-          # Replace the metadata ref (tag or rev).
           cargo, n = re.subn(
-              rf'^(\[package\.metadata\.upstream\]\s*\n^{key} = ")[^"]+("\s*)$',
-              rf'\g<1>{TAG}\g<2>',
+              r'^(\[package\.metadata\.upstream\]\s*\n)(?:tag|rev) = "[^"]+"[ \t]*\n',
+              rf'\g<1>{key} = "{TAG}"\n',
               cargo,
               flags=re.M,
           )
           if n != 1:
-              raise SystemExit(f"expected 1 upstream metadata {key} to rewrite, rewrote {n}")
+              raise SystemExit(f"expected 1 upstream metadata entry to rewrite, rewrote {n}")
 
           def replace_dep(cargo, name, new_value):
               pattern = rf'^{name} = \{{[^}}]+\}}'
@@ -354,6 +348,7 @@ jobs:
           API_VERSION: ${{ steps.apiver.outputs.api_version }}
         run: |
           NEWVER=$(python3 - <<'EOF'
+          import os
           import re
           cargo = open("Cargo.toml").read()
           ver = re.search(r'^version = "(\d+)\.(\d+)\.(\d+)"', cargo, re.M).groups()
@@ -388,7 +383,7 @@ jobs:
         run: |
           cargo generate-lockfile
           cargo build --release --locked
-          cargo test --locked -- --ignored
+          cargo test --locked
 
       - name: Build the host at the release tag
         run: |

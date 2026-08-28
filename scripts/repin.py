@@ -172,16 +172,17 @@ def main() -> int:
     cargo_path = repo_root / "Cargo.toml"
     cargo = cargo_path.read_text(encoding="utf-8")
 
-    # Update the metadata ref (tag or rev).
+    # Update the metadata ref (tag or rev). The existing key may differ from
+    # the new one (e.g. switching from a pinned revision to a release tag).
     key = metadata_key(ref)
     cargo, n = re.subn(
-        rf'^(\[package\.metadata\.upstream\]\s*\n^{key} = ")[^"]+("\s*)$',
-        rf'\g<1>{ref}\g<2>',
+        r'^(\[package\.metadata\.upstream\]\s*\n)(?:tag|rev) = "[^"]+"[ \t]*\n',
+        rf'\g<1>{key} = "{ref}"\n',
         cargo,
         flags=re.M,
     )
     if n != 1:
-        raise SystemExit(f"expected 1 upstream metadata {key} to rewrite, rewrote {n}")
+        raise SystemExit(f"expected 1 upstream metadata entry to rewrite, rewrote {n}")
 
     # ocs_plugin_api: git by tag or rev.
     ocs_api_value = f'{{ git = "{UPSTREAM_URL}", {key} = "{ref}", features = ["host"] }}'
