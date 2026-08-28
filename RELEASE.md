@@ -174,7 +174,7 @@ The `release` workflow builds the plugin cdylib for each desktop platform and at
    cargo build --release --locked
    ```
 6. **Stage assets** — copies the built cdylib to `dist/<canonical-name>` and copies `plugin.toml` to `dist/plugin.toml`.
-7. **Create GitHub Release** — uses `softprops/action-gh-release@v3` to attach the platform binary and `plugin.toml` to the release.
+7. **Create GitHub Release** — uses `softprops/action-gh-release@v2` to attach the platform binary and `plugin.toml` to the release.
 
 ---
 

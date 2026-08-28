@@ -138,7 +138,7 @@ def replace_dep(cargo: str, name: str, new_value: str) -> str:
 
 
 def is_sha(ref: str) -> bool:
-    return len(ref) >= 7 and all(c in "0123456789abcdef" for c in ref.lower())
+    return len(ref) >= 7 and all(c in "0123456789abcdefABCDEF" for c in ref)
 
 
 def metadata_key(ref: str) -> str:
