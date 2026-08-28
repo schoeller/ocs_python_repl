@@ -129,16 +129,6 @@ def pkg_version(packages: dict, direct_deps: dict[str, str], name: str) -> str:
     return packages[name][0]
 
 
-def git_source(packages: dict, name: str) -> tuple[str, str]:
-    ver, src = packages[name]
-    if src is None:
-        raise SystemExit(f"{name} is not a git dependency in upstream Cargo.lock")
-    m = re.fullmatch(r"git\+(?P<url>[^?#]+)(\?[^#]*)?#(?P<rev>[0-9a-f]{40})", src)
-    if not m:
-        raise SystemExit(f"unparseable git source for {name}: {src}")
-    return m.group("url"), m.group("rev")
-
-
 def replace_dep(cargo: str, name: str, new_value: str) -> str:
     pattern = rf'^{name} = \{{[^}}]+\}}'
     cargo, n = re.subn(pattern, f'{name} = {new_value}', cargo, flags=re.M)
@@ -159,7 +149,9 @@ def main() -> int:
     repo_root = Path(__file__).resolve().parent.parent
     ref_path = repo_root / ".upstream-tag"
 
-    ref = sys.argv[1] if len(sys.argv) > 1 else read_upstream_ref(ref_path)
+    env_mode = "--env" in sys.argv
+    args = [a for a in sys.argv[1:] if a != "--env"]
+    ref = args[0] if args else read_upstream_ref(ref_path)
     print(f"re-pinning to upstream ref {ref}")
 
     lock_text = fetch_lock(ref)
@@ -222,6 +214,19 @@ def main() -> int:
     print(f"  acadrust       -> {acad_url}@{acad_rev[:7]}")
     for dep_name in registry_pins:
         print(f"  {dep_name:<15} -> {pkg_version(packages, direct_deps, dep_name)}")
+
+    if env_mode:
+        print(f"HOST_TAG={ref}")
+        print(f"ACADRUST_URL={acad_url}")
+        print(f"ACADRUST_REV={acad_rev}")
+        print(f"SERDE={pkg_version(packages, direct_deps, 'serde')}")
+        print(f"SERDE_JSON={pkg_version(packages, direct_deps, 'serde_json')}")
+        print(f"BINCODE={pkg_version(packages, direct_deps, 'bincode')}")
+        print(f"MEMMAP2={pkg_version(packages, direct_deps, 'memmap2')}")
+        print(f"ANYHOW={pkg_version(packages, direct_deps, 'anyhow')}")
+        print(f"GETRANDOM={pkg_version(packages, direct_deps, 'getrandom')}")
+        print(f"LIBC={pkg_version(packages, direct_deps, 'libc')}")
+        print(f"WINDOWS_SYS={pkg_version(packages, direct_deps, 'windows-sys')}")
 
     return 0
 
