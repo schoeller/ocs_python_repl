@@ -139,6 +139,10 @@ jobs:
         run: |
           set -euo pipefail
           python3 scripts/repin.py "$TAG" --env >> "$GITHUB_ENV"
+          # GITHUB_ENV is only applied to subsequent steps; source it now so the
+          # values are available for the step outputs below.
+          # shellcheck source=/dev/null
+          source "$GITHUB_ENV"
           echo "host_tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "acadrust_url=$ACADRUST_URL" >> "$GITHUB_OUTPUT"
           echo "acadrust_rev=$ACADRUST_REV" >> "$GITHUB_OUTPUT"
