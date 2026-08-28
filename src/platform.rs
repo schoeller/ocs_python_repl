@@ -617,7 +617,10 @@ pub fn spawn_test_group(cmd: &mut Command) -> std::io::Result<ProcessGroup> {
             })
             .spawn()?
         };
-        Ok(ProcessGroup { pgid: child.id() })
+        Ok(ProcessGroup {
+            pid: child.id(),
+            pgid: child.id(),
+        })
     }
     #[cfg(windows)]
     {
