@@ -30,16 +30,6 @@ on:
         description: "Run all gates but stop before committing/tagging/releasing"
         type: boolean
         default: false
-  workflow_call:
-    inputs:
-      upstream_tag:
-        required: true
-        type: string
-      dry_run:
-        required: false
-        type: boolean
-        default: false
-
 env:
   UPSTREAM_REPO: HakanSeven12/OpenCADStudio
 
