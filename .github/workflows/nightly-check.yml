@@ -1,0 +1,69 @@
+name: nightly-check
+
+# Poll the upstream OpenCADStudio repository for new releases every night.
+# When a new upstream release tag appears and no repin branch for it exists,
+# trigger the `repin` workflow so the plugin is re-pinned to the new host tree.
+#
+# The workflow is also available for manual dispatch for testing or recovery.
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
+    outputs:
+      tag: ${{ steps.latest.outputs.tag }}
+      repin: ${{ steps.compare.outputs.repin }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Fetch latest upstream release tag
+        id: latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag=$(gh api "repos/HakanSeven12/OpenCADStudio/releases/latest" --jq .tag_name)
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "latest upstream release: $tag"
+
+      - name: Compare with current .upstream-tag
+        id: compare
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          current=$(cat .upstream-tag | tr -d '[:space:]')
+          latest="${{ steps.latest.outputs.tag }}"
+          echo "current=$current latest=$latest"
+
+          if [ "$current" = "$latest" ]; then
+            echo "Already pinned to upstream $latest."
+            echo "repin=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Avoid duplicate triggers if a repin for this tag is already in flight.
+          if gh api "repos/${{ github.repository }}/git/ref/heads/repin/$latest" >/dev/null 2>&1; then
+            echo "Branch repin/$latest already exists — skipping duplicate trigger."
+            echo "repin=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "New upstream release detected: $current -> $latest"
+          echo "repin=true" >> "$GITHUB_OUTPUT"
+
+      - name: Trigger repin workflow
+        if: steps.compare.outputs.repin == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh workflow run repin.yml \
+            -f "upstream_tag=${{ steps.latest.outputs.tag }}"

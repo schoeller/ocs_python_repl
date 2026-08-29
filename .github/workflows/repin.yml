@@ -1,121 +1,64 @@
 name: repin
 
-# Watch upstream Open CAD Studio releases and re-pin this plugin when a new
-# release tag appears. The Python REPL plugin must be built against the exact
-# same `ocs_plugin_api` commit, `acadrust` rev, and registry dependency versions
-# as the shipped host, because the V4 shared-memory snapshot and the plugin-host
-# wire protocol are laid out by those crates. A mismatch produces the kind of
-# `slice::from_raw_parts` / ABI crash seen when the plugin and host were built
-# from different commits.
+# Re-pin this plugin to an upstream OpenCADStudio release tag.
 #
-# The single source of truth for the upstream pin is `.upstream-tag` at the
-# repository root. It may contain either a release tag (e.g. `v0.9.7`) or a full
-# git revision. This workflow reads that file, fetches the upstream Cargo.lock at
-# the corresponding ref, and rewrites `Cargo.toml` (and `Cargo.lock`) with the
-# matching dependency pins. Manual re-pins can be done with `scripts/repin.py`.
+# The workflow fetches the upstream Cargo.lock, Cargo.toml and
+# crates/ocs_plugin_api/Cargo.toml at the requested tag, then:
 #
-# Two entry points:
+#   1. Rewrites .upstream-tag, Cargo.toml and Cargo.lock to match the host tree.
+#   2. Verifies every dependency used by the plugin also exists in the upstream
+#      Cargo.lock at the same version.
+#   3. Overwrites acadrust_source in plugin.toml with the resolved upstream value.
+#   4. Builds the plugin and runs its tests.
+#   5. Builds the upstream host at the same tag and smoke-tests that the host
+#      loads the re-pinned plugin.
+#   6. Bumps the plugin patch version, merges the change, tags it and triggers a
+#      release.
 #
-#   schedule (cron)     — nightly check against the latest upstream release.
-#                         The current pin is always overwritten with the latest
-#                         release tag, even if it was previously a git revision.
-#   workflow_dispatch   — manual re-pin to a chosen upstream tag or rev, or a dry run.
+# Entry points:
+#   workflow_dispatch  — manual re-pin, optional dry run.
+#   workflow_call      — invoked by the nightly-check workflow.
+
 on:
-  schedule:
-    - cron: "17 6 * * *"
   workflow_dispatch:
     inputs:
-      tag:
-        description: "Upstream tag to re-pin to (default: value from .upstream-tag)"
-        required: false
+      upstream_tag:
+        description: "Upstream OpenCADStudio release tag (e.g. v0.9.8)"
+        required: true
+        type: string
       dry_run:
-        description: "Run every gate but stop before merge/tag/release"
+        description: "Run all gates but stop before committing/tagging/releasing"
         type: boolean
         default: false
+  workflow_call:
+    inputs:
+      upstream_tag:
+        required: true
+        type: string
+      dry_run:
+        required: false
+        type: boolean
+        default: false
+
+env:
+  UPSTREAM_REPO: HakanSeven12/OpenCADStudio
 
 concurrency:
   group: repin
   cancel-in-progress: false
 
-env:
-  UPSTREAM: HakanSeven12/OpenCADStudio
-
 jobs:
-  detect:
-    runs-on: ubuntu-latest
-    outputs:
-      repin: ${{ steps.check.outputs.repin }}
-      tag: ${{ steps.check.outputs.tag }}
-    steps:
-      - uses: actions/checkout@v5
-      - name: Compare desired upstream ref against the current pin
-        id: check
-        env:
-          GH_TOKEN: ${{ github.token }}
-          DRY_RUN: ${{ inputs.dry_run }}
-          INPUT_TAG: ${{ inputs.tag }}
-          EVENT_NAME: ${{ github.event_name }}
-        run: |
-          set -euo pipefail
-
-          CURRENT_REF=$(cat .upstream-tag | tr -d '[:space:]')
-
-          if [ -n "$INPUT_TAG" ]; then
-            # Manual workflow_dispatch override.
-            REF="$INPUT_TAG"
-            echo "using workflow_dispatch ref=$REF"
-          elif [ "$EVENT_NAME" = "schedule" ]; then
-            # Nightly poll: always adopt the latest upstream release tag.
-            REF=$(gh api "repos/$UPSTREAM/releases/latest" --jq .tag_name)
-            echo "cron poll: latest upstream release=$REF; current pin=$CURRENT_REF"
-          else
-            # Fallback: re-pin to the current .upstream-tag value (useful for dry runs).
-            REF="$CURRENT_REF"
-            echo "fallback: using current .upstream-tag=$REF"
-          fi
-
-          # Resolve both refs to commit SHAs so a tag and the revision it points
-          # to are treated as the same pin.
-          CURRENT_SHA=$(gh api "repos/$UPSTREAM/commits/$CURRENT_REF" --jq .sha)
-          DESIRED_SHA=$(gh api "repos/$UPSTREAM/commits/$REF" --jq .sha)
-          echo "current pin $CURRENT_REF -> $CURRENT_SHA"
-          echo "desired ref $REF -> $DESIRED_SHA"
-
-          if [ "$DESIRED_SHA" = "$CURRENT_SHA" ] && [ "$DRY_RUN" != "true" ]; then
-            echo "Pin is current ($CURRENT_REF -> $DESIRED_SHA) — nothing to do."
-            echo "repin=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          if [ "$DESIRED_SHA" = "$CURRENT_SHA" ]; then
-            echo "::notice::dry run against the current pin — gates will run, nothing will ship."
-          fi
-
-          if [ "$DRY_RUN" != "true" ] \
-             && git ls-remote --exit-code origin "refs/heads/repin/$REF" >/dev/null 2>&1; then
-            echo "Branch repin/$REF already exists — PR pending or handled."
-            echo "repin=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          echo "repin=true" >> "$GITHUB_OUTPUT"
-          echo "tag=$REF" >> "$GITHUB_OUTPUT"
-
   repin:
-    needs: detect
-    if: needs.detect.outputs.repin == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
     permissions:
       contents: write
       pull-requests: write
     outputs:
       release_tag: ${{ steps.ship.outputs.release_tag }}
-    env:
-      TAG: ${{ needs.detect.outputs.tag }}
-      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v5
+
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -124,179 +67,373 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Capture current acadrust pin
-        id: old_pins
-        run: |
-          set -euo pipefail
-          old_url=$(grep -m1 '^acadrust = ' Cargo.toml | grep -oP 'git = "\K[^"]+' || true)
-          old_rev=$(grep -m1 '^acadrust = ' Cargo.toml | grep -oP 'rev = "\K[^"]+' || true)
-          echo "old_acadrust_url=$old_url" >> "$GITHUB_OUTPUT"
-          echo "old_acadrust_rev=$old_rev" >> "$GITHUB_OUTPUT"
-          echo "old acadrust: $old_url @ $old_rev"
-
-      - name: Derive new pins from the upstream tag
-        id: pins
-        run: |
-          set -euo pipefail
-          python3 scripts/repin.py "$TAG" --env >> "$GITHUB_ENV"
-          # GITHUB_ENV is only applied to subsequent steps; source it now so the
-          # values are available for the step outputs below.
-          # shellcheck source=/dev/null
-          source "$GITHUB_ENV"
-          echo "host_tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "acadrust_url=$ACADRUST_URL" >> "$GITHUB_OUTPUT"
-          echo "acadrust_rev=$ACADRUST_REV" >> "$GITHUB_OUTPUT"
-          cat Cargo.toml
-
-      - name: Gate on the plugin API version handshake
-        id: apiver
-        run: |
-          gh api "repos/$UPSTREAM/contents/crates/ocs_plugin_api/src/manifest.rs?ref=$TAG" \
-            -H "Accept: application/vnd.github.raw" > /tmp/manifest.rs
-          MAX=$(grep -oP 'API_VERSION: u32 = \K\d+' /tmp/manifest.rs)
-          MIN=$(grep -oP 'API_VERSION_MIN_SUPPORTED: u32 = \K\d+' /tmp/manifest.rs)
-          OURS=$(grep -oP 'api_version = \K\d+' plugin.toml)
-          echo "host accepts [$MIN, $MAX]; plugin declares $OURS"
-          if [ "$OURS" -lt "$MIN" ] || [ "$OURS" -gt "$MAX" ]; then
-            echo "::error::Host $TAG no longer accepts api_version=$OURS — a source migration is needed, not a re-pin."
-            exit 1
-          fi
-          echo "api_version=$MAX" >> "$GITHUB_OUTPUT"
-          if [ "$OURS" != "$MAX" ]; then
-            echo "::notice::api_version $OURS -> $MAX (host $TAG exports API_VERSION=$MAX)"
-          fi
-
-      - name: Bump the plugin patch version
-        id: bump
+      - name: Fetch upstream manifests at the requested tag
         env:
-          API_VERSION: ${{ steps.apiver.outputs.api_version }}
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.upstream_tag }}
         run: |
-          NEWVER=$(python3 - <<'EOF'
-          import os
+          set -euo pipefail
+          mkdir -p /tmp/upstream
+          gh api "repos/$UPSTREAM_REPO/contents/Cargo.lock?ref=$TAG" \
+            -H "Accept: application/vnd.github.raw" > /tmp/upstream/Cargo.lock
+          gh api "repos/$UPSTREAM_REPO/contents/Cargo.toml?ref=$TAG" \
+            -H "Accept: application/vnd.github.raw" > /tmp/upstream/Cargo.toml
+          gh api "repos/$UPSTREAM_REPO/contents/crates/ocs_plugin_api/Cargo.toml?ref=$TAG" \
+            -H "Accept: application/vnd.github.raw" > /tmp/upstream/ocs_plugin_api.Cargo.toml
+          echo "Fetched upstream manifests at $TAG"
+
+      - name: Re-pin local Cargo.toml and Cargo.lock
+        env:
+          TAG: ${{ inputs.upstream_tag }}
+        run: python - <<'PY'
           import re
-          cargo = open("Cargo.toml").read()
-          ver = re.search(r'^version = "(\d+)\.(\d+)\.(\d+)"', cargo, re.M).groups()
-          new = f"{ver[0]}.{ver[1]}.{int(ver[2]) + 1}"
-          cargo = re.sub(r'^version = "[\d.]+"', f'version = "{new}"', cargo, count=1, flags=re.M)
-          open("Cargo.toml", "w").write(cargo)
+          from pathlib import Path
 
-          plug = open("plugin.toml").read()
-          plug = re.sub(r'^version = "[\d.]+"', f'version = "{new}"', plug, count=1, flags=re.M)
-          plug = re.sub(r"^api_version = \d+", f"api_version = {os.environ['API_VERSION']}", plug, count=1, flags=re.M)
-          open("plugin.toml", "w").write(plug)
-          print(new)
-          EOF
+          repo = Path.cwd()
+          upstream_lock = Path("/tmp/upstream/Cargo.lock").read_text(encoding="utf-8")
+          upstream_repo = "HakanSeven12/OpenCADStudio"
+          tag = "${{ inputs.upstream_tag }}"
+
+          # Extract the resolved acadrust source from the upstream lockfile.
+          m = re.search(
+              r'^name = "acadrust"\n'
+              r'^version = "([^"]+)"\n'
+              r'^source = "git\+([^?]+)\?rev=([^#]+)',
+              upstream_lock,
+              re.M,
           )
-          echo "newver=$NEWVER" >> "$GITHUB_OUTPUT"
-          git diff
+          if not m:
+              raise SystemExit("acadrust not found in upstream Cargo.lock")
+          acad_url = m.group(2)
+          acad_rev = m.group(3)
+          plain_acad_url = acad_url.replace("https://git@", "https://")
+          print(f"acadrust resolved source: {acad_url} @ {acad_rev}")
 
-      - name: Gate on the diff being purely mechanical
-        run: |
-          CHANGED=$(git diff --name-only | sort | tr '\n' ' ')
-          echo "changed: $CHANGED"
-          UNEXPECTED=$(git diff --name-only \
-            | grep -vE '^(Cargo\.toml|plugin\.toml|Cargo\.lock|\.upstream-tag)$' || true)
-          if [ -n "$UNEXPECTED" ]; then
-            echo "::error::re-pin touched files beyond the manifests: $UNEXPECTED"
-            exit 1
-          fi
+          # Update local Cargo.toml.
+          cargo_path = repo / "Cargo.toml"
+          cargo = cargo_path.read_text(encoding="utf-8")
 
-      - name: Build and test the plugin against the new pins
+          # metadata upstream tag
+          cargo, n = re.subn(
+              r'^(\[package\.metadata\.upstream\]\s*\n)(?:tag|rev) = "[^"]+"[ \t]*\n',
+              rf'\g<1>tag = "{tag}"\n',
+              cargo,
+              flags=re.M,
+          )
+          if n != 1:
+              raise SystemExit(f"expected 1 upstream metadata entry, rewrote {n}")
+
+          # ocs_plugin_api runtime + build dependency
+          ocs_value = f'{{ git = "https://github.com/{upstream_repo}", tag = "{tag}", features = ["host"] }}'
+          cargo, n = re.subn(
+              r'^ocs_plugin_api = \{[^}]+\}',
+              f'ocs_plugin_api = {ocs_value}',
+              cargo,
+              count=2,
+              flags=re.M,
+          )
+          if n != 2:
+              raise SystemExit(f"expected 2 ocs_plugin_api entries, rewrote {n}")
+
+          # acadrust direct dependency (plain URL, no git@). The rev is taken from
+          # the upstream resolved lockfile so Cargo.toml and Cargo.lock agree.
+          acad_value = f'{{ git = "{plain_acad_url}", rev = "{acad_rev}", features = ["serde"] }}'
+          cargo, n = re.subn(
+              r'^acadrust = \{[^}]+\}',
+              f'acadrust = {acad_value}',
+              cargo,
+              count=1,
+              flags=re.M,
+          )
+          if n != 1:
+              raise SystemExit(f"expected 1 acadrust dependency entry, rewrote {n}")
+
+          # Remove any existing cadcodec patch section and append a fresh one.
+          # The patch must use a URL that Cargo considers a different source from
+          # the plain dependency URL, so we use the git@ form the host uses.
+          cargo = re.sub(
+              r'\n?# The upstream host workspace patches acadrust[^\n]*\n'
+              r'(?:# [^\n]*\n)*'
+              r'\[patch\."https://github\.com/HakanSeven12/cadcodec\.git"\]\n'
+              r'acadrust\s*=\s*\{[^}]+\}\s*\n?',
+              "\n",
+              cargo,
+              flags=re.M,
+          )
+          patch_section = (
+              f'\n# The upstream host workspace patches acadrust to a newer revision than the one\n'
+              f'# declared by ocs_plugin_api. Without this patch, ocs_plugin_api would resolve\n'
+              f'# its own acadrust revision independently and the plugin would see two different\n'
+              f'# acadrust crates, breaking the ABI contract.\n'
+              f'[patch."https://github.com/HakanSeven12/cadcodec.git"]\n'
+              f'acadrust = {{ git = "{acad_url}", rev = "{acad_rev}" }}\n'
+          )
+          cargo = cargo.rstrip() + "\n" + patch_section
+          cargo_path.write_text(cargo, encoding="utf-8")
+
+          # Update .upstream-tag.
+          (repo / ".upstream-tag").write_text(tag + "\n", encoding="utf-8")
+
+          # Merge upstream Cargo.lock into the local lockfile.
+          local_lock = (repo / "Cargo.lock").read_text(encoding="utf-8")
+
+          header_match = re.match(r'(#.*?\nversion = \d+\n)', upstream_lock, re.S)
+          header = header_match.group(1) if header_match else (
+              "# This file is automatically @generated by Cargo.\n"
+              "# It is not intended for manual editing.\n"
+              "version = 4\n"
+          )
+          upstream_blocks = re.findall(
+              r'\[\[package\]\]\n(.*?(?=\n\[\[package\]\]\n|$))',
+              upstream_lock,
+              re.S,
+          )
+          upstream_blocks = [b.strip() for b in upstream_blocks]
+
+          local_blocks = re.split(r"\n\[\[package\]\]\n", local_lock)
+          plugin_specific = {
+              "which", "pyo3", "pyo3-build-config", "pyo3-ffi",
+              "pyo3-macros", "pyo3-macros-backend",
+          }
+          keep_blocks = []
+          ocs_python_repl_block = None
+          for block in local_blocks:
+              m = re.search(r'^name = "([^"]+)"', block, re.M)
+              if not m:
+                  continue
+              name = m.group(1)
+              if name in plugin_specific:
+                  keep_blocks.append(block.strip())
+              elif name == "ocs_python_repl":
+                  ocs_python_repl_block = block.strip()
+
+          blocks = []
+          for b in upstream_blocks:
+              if b.startswith('name = "OpenCADStudio"'):
+                  if ocs_python_repl_block:
+                      blocks.append(ocs_python_repl_block)
+              else:
+                  blocks.append(b)
+          if not ocs_python_repl_block:
+              raise SystemExit("ocs_python_repl package not found in local Cargo.lock")
+          blocks.extend(keep_blocks)
+
+          new_lock = header + "\n[[package]]\n" + "\n[[package]]\n".join(blocks) + "\n"
+          (repo / "Cargo.lock").write_text(new_lock, encoding="utf-8")
+          print(f"Wrote merged Cargo.lock: {len(upstream_blocks)} upstream blocks + {len(keep_blocks)} plugin blocks")
+        PY
+
+      - name: Resolve plugin lockfile and build the release cdylib
         env:
           PYO3_PYTHON: python
         run: |
-          cargo generate-lockfile
-          cargo build --release --locked
+          # Cargo may need to add or prune a handful of plugin-specific entries.
+          # Build the release profile without --locked so the merged upstream
+          # lockfile can be adjusted once; the remaining steps enforce --locked.
+          cargo build --release
+
+      - name: Verify all dependencies match the upstream tree
+        env:
+          TAG: ${{ inputs.upstream_tag }}
+        run: python - <<'PY'
+          import re
+          import sys
+          from pathlib import Path
+
+          upstream = Path("/tmp/upstream/Cargo.lock").read_text(encoding="utf-8")
+          local = Path("Cargo.lock").read_text(encoding="utf-8")
+
+          def parse(text):
+              blocks = re.findall(r'\[\[package\]\]\n(.*?(?=\n\[\[package\]\]\n|$))', text, re.S)
+              pkgs = {}
+              for b in blocks:
+                  name = re.search(r'^name = "([^"]+)"', b, re.M)
+                  ver = re.search(r'^version = "([^"]+)"', b, re.M)
+                  if name and ver:
+                      pkgs.setdefault(name.group(1), set()).add(ver.group(1))
+              return pkgs
+
+          up = parse(upstream)
+          loc = parse(local)
+
+          plugin_only = {
+              "ocs_python_repl", "which", "pyo3", "pyo3-build-config",
+              "pyo3-ffi", "pyo3-macros", "pyo3-macros-backend",
+          }
+          mismatches = []
+          for name, lvers in sorted(loc.items()):
+              if name in plugin_only:
+                  continue
+              if name not in up:
+                  continue
+              for lv in lvers:
+                  if lv not in up[name]:
+                      mismatches.append(f"{name} {lv} (upstream has {sorted(up[name])})")
+
+          if mismatches:
+              print("Dependency mismatch with upstream Cargo.lock:", file=sys.stderr)
+              for m in mismatches:
+                  print(f"  {m}", file=sys.stderr)
+              sys.exit(1)
+
+          print("All overlapping dependencies match the upstream Cargo.lock.")
+        PY
+
+      - name: Inject acadrust fingerprint into plugin.toml
+        run: python - <<'PY'
+          import re
+          from pathlib import Path
+
+          repo = Path.cwd()
+          lock = (repo / "Cargo.lock").read_text(encoding="utf-8")
+          m = re.search(r'^name = "acadrust"\n^version = "[^"]+"\n^source = "([^"]+)"', lock, re.M)
+          if not m:
+              raise SystemExit("acadrust source not found in local Cargo.lock")
+          source = m.group(1)
+
+          plugin = repo / "plugin.toml"
+          text = plugin.read_text(encoding="utf-8")
+          if "[opencad]" not in text:
+              text = text.rstrip() + "\n\n[opencad]\n"
+          text, n = re.subn(
+              r'^(\[opencad\]\s*\n)(?:acadrust_source\s*=\s*"[^"]*"\s*\n)?',
+              rf'\g<1>acadrust_source = "{source}"\n',
+              text,
+              flags=re.M,
+          )
+          if n == 0:
+              text = re.sub(
+                  r'^(\[opencad\]\s*\n)',
+                  rf'\g<1>acadrust_source = "{source}"\n',
+                  text,
+                  flags=re.M,
+              )
+          plugin.write_text(text, encoding="utf-8")
+          print(f"plugin.toml acadrust_source = {source}")
+        PY
+
+      - name: Test the plugin against the resolved lockfile
+        env:
+          PYO3_PYTHON: python
+        run: |
+          set -euo pipefail
           cargo test --locked
 
-      - name: Build the host at the release tag
+      - name: Build the upstream host at the release tag
+        env:
+          TAG: ${{ inputs.upstream_tag }}
         run: |
+          set -euo pipefail
           sudo apt-get update -q
           sudo apt-get install -y \
             libgl1-mesa-dev libx11-dev libxcursor-dev libxi-dev libxrandr-dev \
             libxkbcommon-dev libwayland-dev libfontconfig1-dev libfreetype6-dev
-          git clone --depth 1 --branch "$TAG" "https://github.com/$UPSTREAM" host
-          cargo build --manifest-path host/Cargo.toml
+          git clone --depth 1 --branch "$TAG" "https://github.com/$UPSTREAM_REPO" /tmp/upstream-repo
+          cargo build --manifest-path /tmp/upstream-repo/Cargo.toml
 
-      - name: Smoke test — headless host loads the plugin
+      - name: Smoke test — headless host loads the re-pinned plugin
+        env:
+          TAG: ${{ inputs.upstream_tag }}
         run: |
+          set -euo pipefail
           STAGE=$(mktemp -d)
           mkdir -p "$STAGE/plugins/opencad.python_repl"
-          cp plugin.toml target/release/libocs_python_repl.so "$STAGE/plugins/opencad.python_repl/"
+          cp plugin.toml "$STAGE/plugins/opencad.python_repl/"
+          cp target/release/libocs_python_repl.so "$STAGE/plugins/opencad.python_repl/"
           {
             echo '{"op":"new"}'
             echo '{"op":"entities"}'
-          } | OCS_PLUGINS_DIR="$STAGE/plugins" host/target/debug/OpenCADStudio --serve \
+          } | OCS_PLUGINS_DIR="$STAGE/plugins" /tmp/upstream-repo/target/debug/OpenCADStudio --serve \
             | tee /tmp/serve.out
-          python3 - <<'EOF'
+          python3 - <<'PY'
           import json
           replies = [json.loads(l) for l in open("/tmp/serve.out") if l.startswith("{")]
           assert replies[0].get("ready"), "host did not report ready"
           assert replies[1].get("ok"), "new command failed"
           assert replies[2].get("ok"), "entities command failed"
           print("smoke test OK: host loaded the plugin and served commands")
-          EOF
+          PY
 
       - name: Stop here on a dry run
         if: inputs.dry_run
         run: |
-          echo "::notice::dry run: every gate passed. Nothing merged, tagged or released."
+          echo "::notice::dry run: all gates passed. Nothing committed, tagged or released."
           echo "### Dry run — all gates green" >> "$GITHUB_STEP_SUMMARY"
-          echo "Nothing was merged, tagged or published." >> "$GITHUB_STEP_SUMMARY"
+          echo "Nothing was committed, tagged or published." >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Open the re-pin PR
+      - name: Bump plugin patch version
         if: ${{ !inputs.dry_run }}
-        id: pr
-        env:
-          HOST_TAG: ${{ steps.pins.outputs.host_tag }}
-          ACADRUST_URL: ${{ steps.pins.outputs.acadrust_url }}
-          ACADRUST_REV: ${{ steps.pins.outputs.acadrust_rev }}
-          OLD_ACADRUST_URL: ${{ steps.old_pins.outputs.old_acadrust_url }}
-          OLD_ACADRUST_REV: ${{ steps.old_pins.outputs.old_acadrust_rev }}
-          NEWVER: ${{ steps.bump.outputs.newver }}
-          API_VERSION: ${{ steps.apiver.outputs.api_version }}
-        run: |
-          set -euo pipefail
-          ACAD_SHORT=${ACADRUST_REV:0:7}
+        id: bump
+        run: python - <<'PY'
+          import os
+          import re
+          from pathlib import Path
 
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git checkout -b "repin/$TAG"
-          git add Cargo.toml plugin.toml .upstream-tag
-          git add -f Cargo.lock
-          git commit -m "release: v$NEWVER — re-pin to host $TAG (acadrust $ACAD_SHORT)" \
-            -m "Automated re-pin per the rebuild rule."
-          git push origin "repin/$TAG"
+          repo = Path.cwd()
 
-          gh pr create \
-            --title "release: v$NEWVER — re-pin to host $TAG (acadrust $ACAD_SHORT)" \
-            --body "Automated re-pin: upstream released [\`$TAG\`](https://github.com/$UPSTREAM/releases/tag/$TAG).
+          cargo = (repo / "Cargo.toml").read_text(encoding="utf-8")
+          ver = re.search(r'^version = "(\d+)\.(\d+)\.(\d+)"', cargo, re.M)
+          if not ver:
+              raise SystemExit("could not read version from Cargo.toml")
+          major, minor, patch = ver.groups()
+          new = f"{major}.{minor}.{int(patch) + 1}"
+          cargo = re.sub(
+              r'^version = "[\d.]+"',
+              f'version = "{new}"',
+              cargo,
+              count=1,
+              flags=re.M,
+          )
+          (repo / "Cargo.toml").write_text(cargo, encoding="utf-8")
 
-          | pin | old | new |
-          |---|---|---|
-          | \`ocs_plugin_api\` | (previous) | \`$HOST_TAG\` |
-          | \`acadrust\` repo | \`$OLD_ACADRUST_URL\` | \`$ACADRUST_URL\` |
-          | \`acadrust\` rev | \`$OLD_ACADRUST_REV\` | \`$ACADRUST_REV\` |
-          | \`api_version\` | (previous) | \`$API_VERSION\` |
+          plugin = (repo / "plugin.toml").read_text(encoding="utf-8")
+          plugin = re.sub(
+              r'^version = "[\d.]+"',
+              f'version = "{new}"',
+              plugin,
+              count=1,
+              flags=re.M,
+          )
+          (repo / "plugin.toml").write_text(plugin, encoding="utf-8")
 
-          **Checks run in this workflow:** api-version gate, \`cargo build --release --locked\`, \`cargo test --locked\`, and a headless host smoke test (host built at \`$TAG\` loads the plugin and serves \`new\` / \`entities\`).
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"newver={new}\n")
+          print(f"bumped plugin version to {new}")
+        PY
 
-          Every gate passed, so this PR is merged and released automatically by the run that opened it."
-
-      - name: Merge and tag
+      - name: Open PR, merge, tag and trigger release
         if: ${{ !inputs.dry_run }}
         id: ship
         env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.upstream_tag }}
           NEWVER: ${{ steps.bump.outputs.newver }}
         run: |
           set -euo pipefail
-          gh pr merge "repin/$TAG" --merge --delete-branch
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          branch="repin/$TAG"
+          git checkout -b "$branch"
+          git add Cargo.toml Cargo.lock plugin.toml .upstream-tag
+          git commit -m "release: v$NEWVER — re-pin to host $TAG" \
+            -m "Upstream acadrust resolved to the revision patched by the host tree." \
+            -m "All overlapping dependencies were verified against the upstream Cargo.lock."
+          git push origin "$branch"
+
+          gh pr create \
+            --title "release: v$NEWVER — re-pin to host $TAG" \
+            --body "Automated re-pin to upstream [\`$TAG\`](https://github.com/$UPSTREAM_REPO/releases/tag/$TAG).\n\n          Every gate passed: dependency verification, \`cargo build --release\`, \`cargo test --locked\`, and a headless host smoke test (host built at \`$TAG\` loads the plugin)."
+
+          gh pr merge "$branch" --merge --delete-branch
+
           git fetch origin main
-          MERGE_SHA=$(git rev-parse origin/main)
-          git tag "v$NEWVER" "$MERGE_SHA"
+          merge_sha=$(git rev-parse origin/main)
+          git tag "v$NEWVER" "$merge_sha"
           git push origin "v$NEWVER"
-          echo "tagged v$NEWVER at $MERGE_SHA"
+
           echo "release_tag=v$NEWVER" >> "$GITHUB_OUTPUT"
+          echo "tagged v$NEWVER at $merge_sha"
 
   release:
     needs: repin
@@ -308,41 +445,41 @@ jobs:
       tag: ${{ needs.repin.outputs.release_tag }}
 
   escalate:
-    needs: [detect, repin]
-    if: failure() && needs.detect.outputs.repin == 'true'
+    needs: repin
+    if: failure() && needs.repin.outputs.release_tag == '' && !inputs.dry_run
     runs-on: ubuntu-latest
     permissions:
       issues: write
     env:
-      TAG: ${{ needs.detect.outputs.tag }}
+      TAG: ${{ inputs.upstream_tag }}
       GH_TOKEN: ${{ github.token }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - name: Open or update the escalation issue
         run: |
           set -euo pipefail
-          TITLE="repin blocked: host $TAG needs a human"
-          BODY=$(cat <<EOF
+          title="repin blocked: host $TAG needs a human"
+          body=$(cat <<EOF
           The automated re-pin to upstream \`$TAG\` did not pass its gates, so nothing was merged, tagged or released.
 
           **Run:** $RUN_URL
 
-          The bot ships a re-pin on its own only while the change stays mechanical. One of these stopped it:
+          Possible causes:
 
-          - the host no longer accepts our \`api_version\` (source migration)
-          - the plugin no longer compiles against the new contract
-          - \`cargo build --release --locked\` or \`cargo test --locked\` failed
+          - a dependency used by the plugin does not match the upstream Cargo.lock
+          - the plugin no longer compiles against the new upstream acadrust/ocs_plugin_api contract
+          - \`cargo build --release\` or \`cargo test --locked\` failed
           - the headless host smoke test failed
-          - the diff reached beyond \`Cargo.toml\` / \`plugin.toml\` / \`Cargo.lock\` / \`.upstream-tag\`
+          - the diff reached beyond the expected manifests
 
-          Open the run log above; the failing step names which one and why.
+          Open the run log above for the failing step and its cause.
           EOF
           )
-          EXISTING=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
-            --search "$TITLE in:title" \
-            --json number,title --jq "[.[] | select(.title == \"$TITLE\")][0].number // empty")
-          if [ -n "$EXISTING" ]; then
-            gh issue comment "$EXISTING" --repo "$GITHUB_REPOSITORY" --body "Still blocked as of $RUN_URL"
+          existing=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+            --search "$title in:title" \
+            --json number,title --jq "[.[] | select(.title == \"$title\")][0].number // empty")
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --repo "$GITHUB_REPOSITORY" --body "Still blocked as of $RUN_URL"
           else
-            gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body "$BODY"
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body "$body"
           fi

@@ -1,16 +1,11 @@
 name: release
 
 # Build the ocs_python_repl plugin cdylib for each desktop platform and attach
-# the binaries plus plugin.toml to a GitHub Release when a v* tag is pushed.
-# Open CAD Studio's Plugin Manager reads the release assets, picks the one
-# matching the user's OS/arch, and installs it.
+# the binaries plus plugin.toml to a GitHub Release.
 #
-# Two entry points:
-#
-#   push (v* tag)  — a human tagged by hand.
-#   workflow_call  — an automated caller (e.g. a repin bot) can invoke this
-#                    workflow directly, because tags pushed by GITHUB_TOKEN do
-#                    not fire push triggers.
+# Entry points:
+#   push (v* tag)    — a human pushed a release tag.
+#   workflow_call    — the repin workflow invokes this after it tags a release.
 
 on:
   push:
@@ -44,7 +39,6 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     env:
-      # `inputs` is unset on the push path, so this resolves to the pushed tag.
       TAG: ${{ inputs.tag || github.ref_name }}
 
     steps:
@@ -54,9 +48,6 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      # A release whose tag disagrees with the manifests ships a plugin that
-      # reports the wrong version to the Plugin Manager. Catch it before the
-      # assets are built.
       - name: Check tag matches the declared plugin version
         shell: bash
         run: |
@@ -75,8 +66,6 @@ jobs:
         with:
           python-version: '3.12'
 
-      # Cargo.toml is the single source of truth for upstream pins; the release
-      # build must not patch or override dependency declarations.
       - name: Build release cdylib
         shell: bash
         env:
@@ -103,16 +92,43 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          # The cdylib name varies by platform (lib*.so / *.dll / lib*.dylib);
-          # the host loader accepts any name with the right extension.
           cp target/release/*.${{ matrix.ext }} "dist/${{ matrix.asset }}"
           cp plugin.toml dist/plugin.toml
 
-      # Rewrite the staged plugin.toml with the exact acadrust revision the
-      # release was built against so the host can verify ABI compatibility
-      # before loading any native code.
       - name: Inject acadrust fingerprint into plugin.toml
-        run: python scripts/inject_acadrust_metadata.py dist/plugin.toml
+        shell: bash
+        run: python - <<'PY'
+          import re
+          from pathlib import Path
+
+          plugin_path = Path("dist/plugin.toml")
+          lock_path = Path("Cargo.lock")
+
+          lock = lock_path.read_text(encoding="utf-8")
+          m = re.search(r'^name = "acadrust"\n^version = "[^"]+"\n^source = "([^"]+)"', lock, re.M)
+          if not m:
+              raise SystemExit("acadrust source not found in Cargo.lock")
+          source = m.group(1)
+
+          text = plugin_path.read_text(encoding="utf-8")
+          if "[opencad]" not in text:
+              text = text.rstrip() + "\n\n[opencad]\n"
+          text, n = re.subn(
+              r'^(\[opencad\]\s*\n)(?:acadrust_source\s*=\s*"[^"]*"\s*\n)?',
+              rf'\g<1>acadrust_source = "{source}"\n',
+              text,
+              flags=re.M,
+          )
+          if n == 0:
+              text = re.sub(
+                  r'^(\[opencad\]\s*\n)',
+                  rf'\g<1>acadrust_source = "{source}"\n',
+                  text,
+                  flags=re.M,
+              )
+          plugin_path.write_text(text, encoding="utf-8")
+          print(f"acadrust_source = {source}")
+        PY
 
       - uses: softprops/action-gh-release@v2
         with:
