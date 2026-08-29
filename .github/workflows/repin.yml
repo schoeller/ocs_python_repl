@@ -211,7 +211,7 @@ jobs:
           new_lock = header + "\n[[package]]\n" + "\n[[package]]\n".join(blocks) + "\n"
           (repo / "Cargo.lock").write_text(new_lock, encoding="utf-8")
           print(f"Wrote merged Cargo.lock: {len(upstream_blocks)} upstream blocks + {len(keep_blocks)} plugin blocks")
-        PY
+          PY
 
       - name: Resolve plugin lockfile and build the release cdylib
         env:
@@ -268,7 +268,7 @@ jobs:
               sys.exit(1)
 
           print("All overlapping dependencies match the upstream Cargo.lock.")
-        PY
+          PY
 
       - name: Inject acadrust fingerprint into plugin.toml
         run: |
@@ -302,7 +302,7 @@ jobs:
               )
           plugin.write_text(text, encoding="utf-8")
           print(f"plugin.toml acadrust_source = {source}")
-        PY
+          PY
 
       - name: Test the plugin against the resolved lockfile
         env:
@@ -392,7 +392,7 @@ jobs:
           with open(os.environ["GITHUB_OUTPUT"], "a") as f:
               f.write(f"newver={new}\n")
           print(f"bumped plugin version to {new}")
-        PY
+          PY
 
       - name: Open PR, merge, tag and trigger release
         if: ${{ !inputs.dry_run }}

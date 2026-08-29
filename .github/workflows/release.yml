@@ -129,7 +129,7 @@ jobs:
               )
           plugin_path.write_text(text, encoding="utf-8")
           print(f"acadrust_source = {source}")
-        PY
+          PY
 
       - uses: softprops/action-gh-release@v2
         with:
