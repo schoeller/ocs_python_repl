@@ -97,7 +97,8 @@ jobs:
 
       - name: Inject acadrust fingerprint into plugin.toml
         shell: bash
-        run: python - <<'PY'
+        run: |
+          python - <<'PY'
           import re
           from pathlib import Path
 

@@ -16,8 +16,7 @@ name: repin
 #      release.
 #
 # Entry points:
-#   workflow_dispatch  — manual re-pin, optional dry run.
-#   workflow_call      — invoked by the nightly-check workflow.
+#   workflow_dispatch  — manual re-pin or triggered by nightly-check via gh workflow run.
 
 on:
   workflow_dispatch:
@@ -75,7 +74,8 @@ jobs:
       - name: Re-pin local Cargo.toml and Cargo.lock
         env:
           TAG: ${{ inputs.upstream_tag }}
-        run: python - <<'PY'
+        run: |
+          python - <<'PY'
           import re
           from pathlib import Path
 
@@ -225,7 +225,8 @@ jobs:
       - name: Verify all dependencies match the upstream tree
         env:
           TAG: ${{ inputs.upstream_tag }}
-        run: python - <<'PY'
+        run: |
+          python - <<'PY'
           import re
           import sys
           from pathlib import Path
@@ -270,7 +271,8 @@ jobs:
         PY
 
       - name: Inject acadrust fingerprint into plugin.toml
-        run: python - <<'PY'
+        run: |
+          python - <<'PY'
           import re
           from pathlib import Path
 
@@ -354,7 +356,8 @@ jobs:
       - name: Bump plugin patch version
         if: ${{ !inputs.dry_run }}
         id: bump
-        run: python - <<'PY'
+        run: |
+          python - <<'PY'
           import os
           import re
           from pathlib import Path
