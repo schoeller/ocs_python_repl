@@ -76,7 +76,7 @@ jobs:
         shell: bash
         env:
           PYO3_PYTHON: python
-        run: cargo build --release --locked
+        run: cargo build --release
 
       - name: Verify Linux plugin links libpython
         if: matrix.os == 'ubuntu-latest'
