@@ -1,7 +1,7 @@
 [plugin]
 id = "opencad.python_repl"
 name = "Python REPL"
-version = "0.1.22"
+version = "0.1.23"
 description = "Interactive Python REPL for Open CAD Studio."
 api_version = 4
 ribbon_order = 70
