@@ -410,10 +410,15 @@ jobs:
           git commit -m "release: v$NEWVER — re-pin to host $TAG" \
             -m "Upstream acadrust resolved to the revision patched by the host tree." \
             -m "All overlapping dependencies were verified against the upstream Cargo.lock."
+
+          # Rebase onto any commits that landed on main while this long-running
+          # job was building/testing, then push. This prevents the non-fast-forward
+          # rejection seen when another workflow (or manual push) updated main.
+          git fetch origin main
+          git rebase origin/main
           git push origin main
 
-          git fetch origin main
-          merge_sha=$(git rev-parse origin/main)
+          merge_sha=$(git rev-parse main)
           git tag "v$NEWVER" "$merge_sha"
           git push origin "v$NEWVER"
 
