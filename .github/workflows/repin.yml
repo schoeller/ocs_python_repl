@@ -217,10 +217,19 @@ jobs:
         env:
           PYO3_PYTHON: python
         run: |
+          set -euo pipefail
           # Cargo may need to add or prune a handful of plugin-specific entries.
           # Build the release profile without --locked so the merged upstream
           # lockfile can be adjusted once; the remaining steps enforce --locked.
+          #
+          # The release workflow also builds on Windows and macOS with --locked,
+          # so make sure the committed Cargo.lock contains the transitive deps
+          # for those targets as well.  cargo update --target only adds missing
+          # packages and does not change versions of entries already in the lockfile.
+          rustup target add x86_64-pc-windows-msvc aarch64-apple-darwin
           cargo build --release
+          cargo update --target x86_64-pc-windows-msvc
+          cargo update --target aarch64-apple-darwin
 
       - name: Verify all dependencies match the upstream tree
         env:
