@@ -394,7 +394,7 @@ jobs:
           print(f"bumped plugin version to {new}")
           PY
 
-      - name: Open PR, merge, tag and trigger release
+      - name: Commit, push to main, tag and trigger release
         if: ${{ !inputs.dry_run }}
         id: ship
         env:
@@ -406,19 +406,11 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          branch="repin/$TAG"
-          git checkout -b "$branch"
           git add Cargo.toml Cargo.lock plugin.toml .upstream-tag
           git commit -m "release: v$NEWVER — re-pin to host $TAG" \
             -m "Upstream acadrust resolved to the revision patched by the host tree." \
             -m "All overlapping dependencies were verified against the upstream Cargo.lock."
-          git push origin "$branch"
-
-          gh pr create \
-            --title "release: v$NEWVER — re-pin to host $TAG" \
-            --body "Automated re-pin to upstream [\`$TAG\`](https://github.com/$UPSTREAM_REPO/releases/tag/$TAG).\n\n          Every gate passed: dependency verification, \`cargo build --release\`, \`cargo test --locked\`, and a headless host smoke test (host built at \`$TAG\` loads the plugin)."
-
-          gh pr merge "$branch" --merge --delete-branch
+          git push origin main
 
           git fetch origin main
           merge_sha=$(git rev-parse origin/main)
