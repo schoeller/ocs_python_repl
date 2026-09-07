@@ -1,6 +1,6 @@
 [package]
 name = "ocs_python_repl"
-version = "0.1.24"
+version = "0.1.25"
 edition = "2021"
 description = "Python REPL plugin for Open CAD Studio (API v4)."
 license = "GPL-3.0-only"
@@ -22,11 +22,11 @@ alloc-debug = []
 # revision, and rewrites the dependency pins below. Do not edit the dependency
 # lines by hand; run `scripts/repin.py` (or the `repin` GitHub Actions workflow).
 [package.metadata.upstream]
-tag = "v0.9.8"
+tag = "v2026.36"
 
 [dependencies]
-ocs_plugin_api = { git = "https://github.com/HakanSeven12/OpenCADStudio", tag = "v0.9.8", features = ["host"] }
-acadrust = { git = "https://github.com/HakanSeven12/cadcodec.git", rev = "788eea0161ba9f3eb7ee6569fd8bb52a8207a2ed", features = ["serde"] }
+ocs_plugin_api = { git = "https://github.com/HakanSeven12/OpenCADStudio", tag = "v2026.36", features = ["host"] }
+acadrust = { git = "https://github.com/HakanSeven12/cadcodec.git", rev = "5b56571a190e7a17c8f12d36390d2938b0fb72f7", features = ["serde"] }
 serde = { version = "=1.0.228", features = ["derive"] }
 serde_json = { version = "=1.0.150" }
 bincode = { version = "=1.3.3" }
@@ -52,7 +52,7 @@ windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Syst
 
 [build-dependencies]
 # Must stay in sync with the runtime dependency above.
-ocs_plugin_api = { git = "https://github.com/HakanSeven12/OpenCADStudio", tag = "v0.9.8", features = ["host"] }
+ocs_plugin_api = { git = "https://github.com/HakanSeven12/OpenCADStudio", tag = "v2026.36", features = ["host"] }
 serde = { version = "=1.0.228", features = ["derive"] }
 serde_json = { version = "=1.0.150" }
 # PyO3's extension-module feature intentionally does not link libpython on Unix.
@@ -65,4 +65,4 @@ pyo3-build-config = "0.23"
 # its own acadrust revision independently and the plugin would see two different
 # acadrust crates, breaking the ABI contract.
 [patch."https://github.com/HakanSeven12/cadcodec.git"]
-acadrust = { git = "https://git@github.com/HakanSeven12/cadcodec.git", rev = "788eea0161ba9f3eb7ee6569fd8bb52a8207a2ed" }
+acadrust = { git = "https://git@github.com/HakanSeven12/cadcodec.git", rev = "5b56571a190e7a17c8f12d36390d2938b0fb72f7" }

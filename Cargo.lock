@@ -4,8 +4,8 @@ version = 4
 
 [[package]]
 name = "acadrust"
-version = "0.4.1"
-source = "git+https://git@github.com/HakanSeven12/cadcodec.git?rev=788eea0161ba9f3eb7ee6569fd8bb52a8207a2ed#788eea0161ba9f3eb7ee6569fd8bb52a8207a2ed"
+version = "0.5.4"
+source = "git+https://git@github.com/HakanSeven12/cadcodec.git?rev=5b56571a190e7a17c8f12d36390d2938b0fb72f7#5b56571a190e7a17c8f12d36390d2938b0fb72f7"
 dependencies = [
  "ahash 0.8.12",
  "anyhow",
@@ -555,8 +555,8 @@ dependencies = [
 
 [[package]]
 name = "ocs_plugin_api"
-version = "0.2.0"
-source = "git+https://github.com/HakanSeven12/OpenCADStudio?tag=v0.9.8#1516694c72ae94ef7cf03750d4fbb070a8c81ab3"
+version = "0.2.1"
+source = "git+https://github.com/HakanSeven12/OpenCADStudio?tag=v2026.36#ddbbdd27ba51b79a93e9087c68d7387cd826432b"
 dependencies = [
  "acadrust",
  "bincode",
@@ -574,7 +574,7 @@ dependencies = [
 
 [[package]]
 name = "ocs_python_repl"
-version = "0.1.23"
+version = "0.1.24"
 dependencies = [
  "acadrust",
  "anyhow",
