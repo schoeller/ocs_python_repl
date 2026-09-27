@@ -3,7 +3,7 @@
 ## Status: implemented
 
 The design described in the original version of this document is now
-implemented. `crates/ocs_python_repl/build/generate.rs` reads the
+implemented. `build/generate.rs` reads the
 `ocs_plugin_api` embedded type registry and `crud_manifest.json` at build time
 and generates:
 
@@ -15,7 +15,7 @@ The registry is the single source of truth. `crud_manifest.json` only supplies
 constructors, renames, flattens, defaults, and custom Rust getter/setter
 expressions where the public API must differ from the raw registry.
 
-See `crates/ocs_python_repl/README.md` for the architecture diagram, override
+See `README.md` for the architecture diagram, override
 examples, and usage instructions. See `AGENTS.md` for rules on adding or
 modifying entity bindings.
 

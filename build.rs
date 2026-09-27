@@ -129,7 +129,7 @@ fn find_type_registry(manifest: &Manifest) -> PathBuf {
     // Prefer the newest registry that actually contains every type we need.
     // Stale/incomplete build artifacts can accumulate in the target directory,
     // and picking purely by mtime produces non-deterministic generated bindings.
-    candidates.sort_by(|a, b| b.0.cmp(&a.0));
+    candidates.sort_by_key(|(mtime, _)| std::cmp::Reverse(*mtime));
     let required: std::collections::BTreeSet<&str> = manifest
         .type_filter
         .iter()

@@ -1,7 +1,7 @@
 # Agentic coding rules: `ocs_python_repl` entity bindings
 
 This file is for autonomous agents (and future maintainers) who add or modify
-Python entity bindings in the `crates/ocs_python_repl` crate.
+Python entity bindings in this repository.
 
 ## Golden rule
 
@@ -13,27 +13,28 @@ override can generate it.
 ## Before touching entity code
 
 1. Read the current registry for the entity and its field types.
-   The registry is written to `crates/ocs_plugin_api/target/<profile>/build/ocs_plugin_api-<hash>/out/type_registry.json`
-   after a successful build. You can also search the most recent build output:
+   The registry is written to `target/<profile>/build/ocs_plugin_api-<hash>/out/type_registry.json`
+   after a successful build (the entry is produced by the `ocs_plugin_api` git
+   dependency). You can also search the most recent build output:
 
    ```powershell
-   Get-ChildItem crates/ocs_plugin_api/target/debug/build/ocs_plugin_api-*/out/type_registry.json
+   Get-ChildItem target/debug/build/ocs_plugin_api-*/out/type_registry.json
    ```
 
 2. Read the current manifest:
-   `crates/ocs_python_repl/crud_manifest.json`.
+   `crud_manifest.json`.
 
 3. Read the generator entry points:
-   `crates/ocs_python_repl/build/generate.rs` and
-   `crates/ocs_python_repl/build.rs`.
+   `build/generate.rs` and `build.rs`.
 
 4. Read the conversion helpers:
-   `crates/ocs_python_repl/src/python_ext.rs`.
+   `src/python_ext.rs`.
 
 ## How to add a new entity kind
 
-1. **Ensure the type is in the registry.** Add it to the allow-list in
-   `crates/ocs_plugin_api/build.rs` if it is missing:
+1. **Ensure the type is in the registry.** The allow-list lives in the upstream
+   OpenCADStudio repository (`crates/ocs_plugin_api/build.rs` there); add it
+   there if it is missing:
 
    ```rust
    ("MyEntity", trace::<acadrust::entities::MyEntity>),
@@ -43,7 +44,7 @@ override can generate it.
    values in `add_enum_samples`.
 
 2. **Add the entity to the central filter.** Open
-   `crates/ocs_python_repl/crud_manifest.json` and append the entity to
+   `crud_manifest.json` and append the entity to
    `type_filter`.
 
 3. **Run a build.** This regenerates `OUT_DIR/python/ocs/entities.py`,
@@ -53,7 +54,7 @@ override can generate it.
    shape, no override is needed. If not, add a minimal override under
    `overrides`.
 
-5. **Add a round-trip test.** In `crates/ocs_python_repl/src/python_ext.rs`,
+5. **Add a round-trip test.** In `src/python_ext.rs`,
    copy an existing test (e.g. `point_roundtrips`) and adapt it to the new
    entity. The test must construct the Rust entity, call `roundtrip`, and assert
    the fields that matter.
@@ -61,7 +62,7 @@ override can generate it.
 6. **Run the test suite:**
 
    ```powershell
-   cargo test -p ocs_python_repl --manifest-path crates/ocs_python_repl/Cargo.toml
+   cargo test
    ```
 
    Do not consider the task done until this command passes.
@@ -69,7 +70,7 @@ override can generate it.
 7. **Run clippy:**
 
    ```powershell
-   cargo clippy -p ocs_python_repl --manifest-path crates/ocs_python_repl/Cargo.toml -- -D warnings
+   cargo clippy -- -D warnings
    ```
 
    The generator is lint-clean; any new warnings must be fixed in the generator,
@@ -183,21 +184,19 @@ and document why the override exists in `manual_overrides`.
 
 ## Common pitfalls
 
-- **Build order:** `ocs_python_repl` reads the registry produced by
-  `ocs_plugin_api`. `build.rs` now validates that the selected registry
-  contains every entity in `crud_manifest.json.type_filter` plus
-  `EntityCommon`; if the build picks a stale artifact, delete
-  `crates/ocs_python_repl/target` and rebuild both crates.
+- **Build order:** `ocs_python_repl` reads the registry produced by the
+  `ocs_plugin_api` git dependency. `build.rs` validates that the selected
+  registry contains every entity in `crud_manifest.json.type_filter` plus
+  `EntityCommon`; if the build picks a stale artifact, delete `target/` and
+  rebuild.
 
-- **Type registry selection:** `ocs_python_repl/build.rs` searches
-  `crates/ocs_python_repl/target/<profile>/build/ocs_plugin_api-*/out/type_registry.json`
-  and prefers the newest registry that contains all required types. If you
-  build from the workspace root, the paths differ; build with the manifest
-  path:
+- **Type registry selection:** `build.rs` searches
+  `target/<profile>/build/ocs_plugin_api-*/out/type_registry.json`
+  and prefers the newest registry that contains all required types.
 
-  ```powershell
-  cargo build --manifest-path crates/ocs_python_repl/Cargo.toml
-  ```
+- **Upstream pin:** the `ocs_plugin_api` / codec dependency pins are rewritten
+  by the `repin` workflow. Never edit them by hand; see `RELEASE.md` and
+  `.github/scripts/repin_gates.py`.
 
 - **Unit enum variants:** enums with only unit variants are exposed as Python
   strings. Data enums / structs are exposed as generated dataclasses.
@@ -212,8 +211,8 @@ and document why the override exists in `manual_overrides`.
 
 ## Verification checklist
 
-- [ ] `cargo test -p ocs_python_repl --manifest-path crates/ocs_python_repl/Cargo.toml` passes.
-- [ ] `cargo clippy -p ocs_python_repl --manifest-path crates/ocs_python_repl/Cargo.toml -- -D warnings` passes.
+- [ ] `cargo test` passes.
+- [ ] `cargo clippy -- -D warnings` passes.
 - [ ] `crud_manifest.json` is valid JSON and the central `type_filter` is updated.
 - [ ] New or changed entities have a round-trip test in `src/python_ext.rs`.
 - [ ] Example scripts under `assets/examples/python_repl/` are updated if the

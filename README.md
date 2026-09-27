@@ -158,10 +158,10 @@ The generated files are copied into each session directory at runtime.
 
 ## Installation
 
-The plugin is a standalone Rust workspace under `crates/ocs_python_repl`.
+The plugin is a standalone Rust crate at the repository root.
 
 ```powershell
-cargo build --manifest-path crates/ocs_python_repl/Cargo.toml
+cargo build
 ```
 
 Install the package into Open CAD Studio's plugin directory:
@@ -169,12 +169,9 @@ Install the package into Open CAD Studio's plugin directory:
 ```powershell
 $pluginDir = "$env:APPDATA\OpenCADStudio\plugins\opencad.python_repl"
 New-Item -ItemType Directory -Force -Path $pluginDir | Out-Null
-Copy-Item crates\ocs_python_repl\plugin.toml              $pluginDir
-Copy-Item crates\ocs_python_repl\target\debug\ocs_python_repl.dll $pluginDir
+Copy-Item plugin.toml              $pluginDir
+Copy-Item target\debug\ocs_python_repl.dll $pluginDir
 ```
-
-> Note: the standalone workspace builds into `crates/ocs_python_repl/target/debug/`,
-> not the root `target/debug/`.
 
 ### Requirements
 
@@ -414,10 +411,11 @@ The registry in `ocs_plugin_api` is the single source of truth for field types.
 The Python/Rust binding for each entity kind is generated from `crud_manifest.json`
 in this crate. To add a new entity kind or override an existing one:
 
-1. Make sure the type is traced by the `ocs_plugin_api` allow-list in
-   `crates/ocs_plugin_api/build.rs` (add an `("MyEntity", trace::<acadrust::MyEntity>)`
-   entry). If the entity contains enums that `serde-reflection` has not seen,
-   add sample values in `add_enum_samples`.
+1. Make sure the type is traced by the `ocs_plugin_api` allow-list in the
+   upstream OpenCADStudio repository (`crates/ocs_plugin_api/build.rs` there —
+   add an `("MyEntity", trace::<acadrust::MyEntity>)` entry). If the entity
+   contains enums that `serde-reflection` has not seen, add sample values in
+   `add_enum_samples`.
 
 2. Add the entity to `crud_manifest.json` under `type_filter` and, only if the
    public API needs to differ from the registry, add an entry under `overrides`:
@@ -463,6 +461,6 @@ in this crate. To add a new entity kind or override an existing one:
    are in `python_ext.rs`; add a new test case following the existing pattern if
    you want to assert entity-specific invariants.
 
-   ```powershell
-   cargo test -p ocs_python_repl --manifest-path crates/ocs_python_repl/Cargo.toml
-   ```
+    ```powershell
+    cargo test
+    ```
