@@ -1,0 +1,70 @@
+name: ci
+
+# Everything the nightly re-pin relies on, run on every change first.
+#
+# The gates-corpus job is the one that matters: a change to the re-pin
+# parsers used to get its first execution at 02:10 UTC against a live
+# upstream release — which is how the same parser broke three releases in a
+# row. The vendored manifest corpus under
+# .github/scripts/tests/fixtures/host/ is the regression suite; a shape
+# that breaks a gate gets its tag vendored in the same PR as the fix.
+#
+# The build job also enforces that the committed Cargo.lock is current
+# (cargo metadata --locked fails if regenerating it would change anything),
+# so a manifest bump without a lockfile refresh cannot land silently.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gates:
+    name: re-pin gates corpus
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install pytest
+      - name: Run the vendored-manifest corpus
+        run: python -m pytest .github/scripts/tests -v
+
+  build:
+    name: build + test + lockfile freshness
+    runs-on: ubuntu-latest
+    env:
+      PYO3_PYTHON: python
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build against the committed lockfile
+        run: cargo build --release --locked
+      - name: Test against the committed lockfile
+        run: cargo test --locked
+      - name: The committed lockfile is current
+        run: |
+          cargo metadata --locked --format-version 1 > /dev/null
+          git diff --exit-code Cargo.lock
+      - name: The committed lockfile is complete for every release platform
+        run: |
+          # The release workflow builds with --locked on Windows and macOS.
+          # cargo check --target resolves each platform's graph; it may then
+          # fail at compile time (the Ubuntu runner lacks the foreign
+          # linkers), which is fine — but it must not have needed to touch
+          # Cargo.lock. If it did, the committed lockfile would break the
+          # next --locked release build, so fail here instead.
+          rustup target add x86_64-pc-windows-msvc aarch64-apple-darwin
+          cargo check --target x86_64-pc-windows-msvc || true
+          cargo check --target aarch64-apple-darwin || true
+          git diff --exit-code Cargo.lock

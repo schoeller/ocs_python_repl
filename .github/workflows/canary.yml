@@ -1,0 +1,119 @@
+name: canary
+
+# Nightly read-only run of the re-pin gates against upstream `main`.
+#
+# Upstream respells its dependency graph regularly (the [patch] redirect at
+# v0.9.8, dropping it at v2026.37, the crate+repo rename acadrust ->
+# opencadcodec at v2026.39). When a respelling reaches a release tag, the
+# repin workflow is the first thing that touches it — which is how three
+# consecutive weekly releases blocked. This workflow parses upstream main
+# with the same gates a night earlier, so a shape the parser cannot read is
+# an issue with lead time instead of a blocked release.
+#
+# Only exit 2 (UNPARSEABLE) opens an issue: a parser gap is a bug in this
+# repository. Decision-level changes (series move, api window) are noticed
+# here but left to the repin's own escalation, which is where the human
+# decision belongs.
+
+on:
+  schedule:
+    - cron: "41 1 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: canary
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPO: HakanSeven12/OpenCADStudio
+  GATES: .github/scripts/repin_gates.py
+
+jobs:
+  parse-upstream-main:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Fetch the upstream main manifests
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/upstream
+          for spec in \
+            "Cargo.toml:Cargo.toml" \
+            "Cargo.lock:Cargo.lock" \
+            "crates/ocs_plugin_api/Cargo.toml:ocs_plugin_api-Cargo.toml" \
+            "crates/ocs_plugin_api/src/manifest.rs:manifest.rs"; do
+            src="${spec%%:*}"; dst="${spec#*:}"
+            gh api "repos/$UPSTREAM_REPO/contents/$src?ref=main" \
+              -H "Accept: application/vnd.github.raw" > "/tmp/upstream/$dst"
+          done
+
+      - name: Parse them with the re-pin gates
+        id: parse
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          plan_rc=0; plan_out=""
+          plan_out=$(python3 "$GATES" host-plan \
+            --plugin-api-manifest /tmp/upstream/ocs_plugin_api-Cargo.toml \
+            --host-manifest /tmp/upstream/Cargo.toml \
+            --host-lock /tmp/upstream/Cargo.lock 2>&1) || plan_rc=$?
+          series_rc=0; api_rc=0
+          if [ "$plan_rc" = 0 ]; then
+            codec_package=$(printf '%s\n' "$plan_out" | sed -n 's/^codec_package=//p')
+            python3 "$GATES" gate-series \
+              --codec-package "${codec_package:-acadrust}" \
+              --host-lock /tmp/upstream/Cargo.lock \
+              --tag "main" || series_rc=$?
+            python3 "$GATES" gate-api \
+              --manifest-rs /tmp/upstream/manifest.rs \
+              --tag "main" || api_rc=$?
+          fi
+          echo "gate exit codes: plan=$plan_rc series=$series_rc api=$api_rc"
+          if [ "$plan_rc" = 2 ] || [ "$series_rc" = 2 ] || [ "$api_rc" = 2 ]; then
+            echo "unparseable=true" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          echo "unparseable=false" >> "$GITHUB_OUTPUT"
+          if [ "$plan_rc" != 0 ] || [ "$series_rc" != 0 ] || [ "$api_rc" != 0 ]; then
+            echo "::notice::upstream main carries a decision-level change (series or api window); the repin will escalate when it ships."
+          fi
+          exit 0
+
+      - name: Open or update the shape-drift issue
+        if: steps.parse.outputs.unparseable == 'true'
+        run: |
+          set -euo pipefail
+          title="shape drift: upstream main is no longer parseable"
+          body=$(cat <<EOF
+          The re-pin gates can no longer read upstream \`main\`. If upstream
+          cuts a release before this is fixed, the nightly re-pin will block.
+
+          **Run:** $RUN_URL
+
+          Fix recipe (same PR):
+          1. Vendor the offending manifests under
+             \`.github/scripts/tests/fixtures/host/<tag>/\` (Cargo.toml, Cargo.lock,
+             crates/ocs_plugin_api/Cargo.toml, manifest.rs).
+          2. Teach the parser in \`.github/scripts/repin_gates.py\` the new shape.
+          3. Add the expectations to the corpus test.
+          4. \`python -m pytest .github/scripts/tests\` must pass.
+          EOF
+          )
+          existing=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+            --search "$title in:title" \
+            --json number,title --jq "[.[] | select(.title == \"$title\")][0].number // empty")
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --repo "$GITHUB_REPOSITORY" \
+              --body "Still unparseable as of $RUN_URL."
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body "$body"
+          fi

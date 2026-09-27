@@ -76,7 +76,11 @@ jobs:
         shell: bash
         env:
           PYO3_PYTHON: python
-        run: cargo build --release
+        # --locked: the re-pin workflow commits a complete cross-target
+        # lockfile (it runs cargo check --target for Windows and macOS), so a
+        # manifest bump without a refreshed lockfile must fail here rather
+        # than silently resolve something else.
+        run: cargo build --release --locked
 
       - name: Verify Linux plugin links libpython
         if: matrix.os == 'ubuntu-latest'
@@ -101,41 +105,17 @@ jobs:
           cp target/release/*.${{ matrix.ext }} "dist/${{ matrix.asset }}"
           cp plugin.toml dist/plugin.toml
 
-      - name: Inject acadrust fingerprint into plugin.toml
+      - name: Inject codec fingerprint into plugin.toml
         shell: bash
         run: |
-          python - <<'PY'
-          import re
-          from pathlib import Path
-
-          plugin_path = Path("dist/plugin.toml")
-          lock_path = Path("Cargo.lock")
-
-          lock = lock_path.read_text(encoding="utf-8")
-          m = re.search(r'^name = "acadrust"\n^version = "[^"]+"\n^source = "([^"]+)"', lock, re.M)
-          if not m:
-              raise SystemExit("acadrust source not found in Cargo.lock")
-          source = m.group(1)
-
-          text = plugin_path.read_text(encoding="utf-8")
-          if "[opencad]" not in text:
-              text = text.rstrip() + "\n\n[opencad]\n"
-          text, n = re.subn(
-              r'^(\[opencad\]\s*\n)(?:acadrust_source\s*=\s*"[^"]*"\s*\n)?',
-              rf'\g<1>acadrust_source = "{source}"\n',
-              text,
-              flags=re.M,
-          )
-          if n == 0:
-              text = re.sub(
-                  r'^(\[opencad\]\s*\n)',
-                  rf'\g<1>acadrust_source = "{source}"\n',
-                  text,
-                  flags=re.M,
-              )
-          plugin_path.write_text(text, encoding="utf-8")
-          print(f"acadrust_source = {source}")
-          PY
+          # The fingerprint is the resolved source of whatever crate carries
+          # the entity types at this pin (acadrust, renamed opencadcodec at
+          # host v2026.39) — discovered from Cargo.toml's dependency, never
+          # hardcoded. Same code path the re-pin workflow uses.
+          python3 .github/scripts/repin_gates.py inject-source \
+            --plugin-toml dist/plugin.toml \
+            --our-lock Cargo.lock \
+            --cargo Cargo.toml
 
       - uses: softprops/action-gh-release@v2
         with:
