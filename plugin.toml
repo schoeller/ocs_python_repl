@@ -1,7 +1,7 @@
 [plugin]
 id = "opencad.python_repl"
 name = "Python REPL"
-version = "0.1.25"
+version = "0.1.26"
 description = "Interactive Python REPL for Open CAD Studio."
 api_version = 4
 ribbon_order = 70
@@ -9,4 +9,4 @@ command_prefixes = ["PYTHONSHELL"]
 xdata_apps = ["PYREPL"]
 
 [opencad]
-acadrust_source = "git+https://git@github.com/HakanSeven12/cadcodec.git?rev=5b56571a190e7a17c8f12d36390d2938b0fb72f7#5b56571a190e7a17c8f12d36390d2938b0fb72f7"
+acadrust_source = "git+https://github.com/HakanSeven12/opencadcodec.git?rev=42b44d2#42b44d2343e9925cff8a0c9e94c1d1c5ae8541c7"
