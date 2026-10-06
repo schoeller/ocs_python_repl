@@ -1,6 +1,6 @@
 [package]
 name = "ocs_python_repl"
-version = "0.1.25"
+version = "0.1.26"
 edition = "2021"
 description = "Python REPL plugin for Open CAD Studio (API v4)."
 license = "GPL-3.0-only"
@@ -22,11 +22,11 @@ alloc-debug = []
 # revision, and rewrites the dependency pins below. Do not edit the dependency
 # lines by hand; run .github/scripts/repin_gates.py (or the `repin` workflow).
 [package.metadata.upstream]
-tag = "v2026.36"
+tag = "v2026.40.1"
 
 [dependencies]
-ocs_plugin_api = { git = "https://github.com/HakanSeven12/OpenCADStudio", tag = "v2026.36", features = ["host"] }
-acadrust = { git = "https://github.com/HakanSeven12/cadcodec.git", rev = "5b56571a190e7a17c8f12d36390d2938b0fb72f7", features = ["serde"] }
+ocs_plugin_api = { git = "https://github.com/HakanSeven12/OpenCADStudio", tag = "v2026.40.1", features = ["host"] }
+acadrust = { package = "opencadcodec", git = "https://github.com/HakanSeven12/opencadcodec.git", rev = "fe69506", features = ["serde"] }
 serde = { version = "=1.0.228", features = ["derive"] }
 serde_json = { version = "=1.0.150" }
 bincode = { version = "=1.3.3" }
@@ -52,7 +52,7 @@ windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Syst
 
 [build-dependencies]
 # Must stay in sync with the runtime dependency above.
-ocs_plugin_api = { git = "https://github.com/HakanSeven12/OpenCADStudio", tag = "v2026.36", features = ["host"] }
+ocs_plugin_api = { git = "https://github.com/HakanSeven12/OpenCADStudio", tag = "v2026.40.1", features = ["host"] }
 serde = { version = "=1.0.228", features = ["derive"] }
 serde_json = { version = "=1.0.150" }
 # PyO3's extension-module feature intentionally does not link libpython on Unix.
@@ -61,9 +61,7 @@ serde_json = { version = "=1.0.150" }
 pyo3-build-config = "0.23"
 
 # BEGIN MIRRORED PATCH (managed by .github/scripts/repin_gates.py)
-# The host workspace redirects the codec source below. The plugin mirrors the
-# redirect byte for byte so both resolve the same codec build; a [patch] only
-# applies from the workspace root, which is why it lives here too.
-[patch."https://github.com/HakanSeven12/cadcodec.git"]
-acadrust = { git = "https://git@github.com/HakanSeven12/cadcodec.git", rev = "5b56571a190e7a17c8f12d36390d2938b0fb72f7" }
+# The host workspace does not patch the codec source at this tag. The plugin
+# must not patch it either: cargo rejects a patch that points at the same
+# source it replaces, and any other redirect would fork the codec build.
 # END MIRRORED PATCH

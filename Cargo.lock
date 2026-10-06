@@ -3,29 +3,6 @@
 version = 4
 
 [[package]]
-name = "acadrust"
-version = "0.5.4"
-source = "git+https://git@github.com/HakanSeven12/cadcodec.git?rev=5b56571a190e7a17c8f12d36390d2938b0fb72f7#5b56571a190e7a17c8f12d36390d2938b0fb72f7"
-dependencies = [
- "ahash 0.8.12",
- "anyhow",
- "bitflags",
- "byteorder",
- "encoding_rs",
- "flate2",
- "indexmap",
- "itoa",
- "memmap2",
- "nom",
- "once_cell",
- "rayon",
- "ryu",
- "serde",
- "thiserror",
- "web-time",
-]
-
-[[package]]
 name = "adler2"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -556,33 +533,34 @@ dependencies = [
 [[package]]
 name = "ocs_plugin_api"
 version = "0.2.1"
-source = "git+https://github.com/HakanSeven12/OpenCADStudio?tag=v2026.36#ddbbdd27ba51b79a93e9087c68d7387cd826432b"
+source = "git+https://github.com/HakanSeven12/OpenCADStudio?tag=v2026.40.1#7d5ee91665b1f0208bc7399912f062bfccefee3e"
 dependencies = [
- "acadrust",
  "bincode",
  "cargo-lock",
  "getrandom 0.2.17",
  "interprocess",
  "libloading",
  "memmap2",
+ "opencadcodec",
  "rkyv",
  "serde",
  "serde-reflection",
+ "serde_bytes",
  "serde_json",
  "thiserror",
 ]
 
 [[package]]
 name = "ocs_python_repl"
-version = "0.1.25"
+version = "0.1.26"
 dependencies = [
- "acadrust",
  "anyhow",
  "bincode",
  "getrandom 0.2.17",
  "libc",
  "memmap2",
  "ocs_plugin_api",
+ "opencadcodec",
  "pyo3",
  "pyo3-build-config",
  "serde",
@@ -596,6 +574,29 @@ name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
+
+[[package]]
+name = "opencadcodec"
+version = "0.5.5"
+source = "git+https://github.com/HakanSeven12/opencadcodec.git?rev=fe69506#fe69506cb99dea6f4c4a73b690a27fdf04403ea0"
+dependencies = [
+ "ahash 0.8.12",
+ "anyhow",
+ "bitflags",
+ "byteorder",
+ "encoding_rs",
+ "flate2",
+ "indexmap",
+ "itoa",
+ "memmap2",
+ "nom",
+ "once_cell",
+ "rayon",
+ "ryu",
+ "serde",
+ "thiserror",
+ "web-time",
+]
 
 [[package]]
 name = "percent-encoding"
@@ -858,6 +859,16 @@ dependencies = [
  "serde_json",
  "thiserror",
  "typeid",
+]
+
+[[package]]
+name = "serde_bytes"
+version = "0.11.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a5d440709e79d88e51ac01c4b72fc6cb7314017bb7da9eeff678aa94c10e3ea8"
+dependencies = [
+ "serde",
+ "serde_core",
 ]
 
 [[package]]
