@@ -9,6 +9,7 @@ symptom.
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -384,6 +385,34 @@ def test_current_pin_reads_tag_and_codec():
     assert pin["version"] == "0.1.25"
 
 
+def test_current_pin_reports_fingerprint_freshness():
+    """The nightly must re-run when host-build.json / rust-toolchain.toml
+    are missing or do not back the pin, so the Plugin Manager never sees a
+    plugin whose fingerprints lag its host."""
+    cargo_text = (OURS / "Cargo.toml").read_text(encoding="utf-8")
+    host_build = json.dumps({
+        "tag": "v2026.36",
+        "rustc_version": "rustc 1.98.1 (48a229cea 2026-09-01)",
+    })
+    toolchain = '[toolchain]\nchannel = "1.98.1"\nprofile = "minimal"\n'
+
+    fresh = gates.current_pin(cargo_text, host_build, toolchain)
+    assert fresh["fingerprints_current"] is True
+    assert fresh["host_build_tag"] == "v2026.36"
+    assert fresh["toolchain_channel"] == "1.98.1"
+
+    stale_tag = gates.current_pin(cargo_text, host_build.replace("v2026.36", "v2026.35"), toolchain)
+    assert stale_tag["fingerprints_current"] is False
+
+    stale_channel = gates.current_pin(cargo_text, host_build, toolchain.replace("1.98.1", "1.99.0"))
+    assert stale_channel["fingerprints_current"] is False
+
+    missing = gates.current_pin(cargo_text, None, None)
+    assert missing["fingerprints_current"] is False
+    assert missing["host_build_tag"] == ""
+    assert missing["toolchain_channel"] == ""
+
+
 def test_current_pin_rejects_drift_between_metadata_and_dependency_pin():
     """A hand-edited dependency pin that leaves [package.metadata.upstream]
     behind must not pass current-pin: the two spellings of the tag are what
@@ -409,6 +438,76 @@ def test_inject_source_uses_the_discovered_package():
         "git+https://github.com/HakanSeven12/opencadcodec.git?rev=42b44d2#42b44d2343e9925cff8a0c9e94c1d1c5ae8541c7"
     )
     assert f'acadrust_source = "{source}"' in plugin
+
+
+def test_inject_source_writes_the_compiler_fingerprint():
+    """The Plugin Manager refuses API v4+ plugins that do not declare the
+    compiler they were built with; the injection must write the full rustc
+    line and be idempotent."""
+    cargo, _, _ = rewritten("v2026.39")
+    plugin, _ = gates.inject_source(
+        gates.load_toml(cargo),
+        settled_lock("v2026.39"),
+        (OURS / "plugin.toml").read_text(encoding="utf-8"),
+        rustc_version="rustc 1.99.0 (b940084d7 2026-09-28)",
+    )
+    assert 'rustc_version = "rustc 1.99.0 (b940084d7 2026-09-28)"' in plugin
+
+    twice, _ = gates.inject_source(
+        gates.load_toml(cargo),
+        settled_lock("v2026.39"),
+        plugin,
+        rustc_version="rustc 1.99.0 (b940084d7 2026-09-28)",
+    )
+    assert twice.count("rustc_version =") == 1
+    assert twice == plugin
+
+
+def test_inject_source_refuses_a_source_without_the_full_hash():
+    """The host parses the 40-hex commit out of acadrust_source; a source
+    without it would be flagged incompatible in every Plugin Manager."""
+    cargo, _, _ = rewritten("v2026.39")
+    lock = settled_lock("v2026.39").replace(
+        "#42b44d2343e9925cff8a0c9e94c1d1c5ae8541c7", "#42b44d2"
+    )
+    with pytest.raises(gates.Escalate):
+        gates.inject_source(
+            gates.load_toml(cargo),
+            lock,
+            (OURS / "plugin.toml").read_text(encoding="utf-8"),
+        )
+
+
+HOST_BUILD = {
+    "tag": "v2026.36",
+    "rustc_version": "rustc 1.98.1 (48a229cea 2026-09-01)",
+}
+
+
+def test_verify_fingerprints_accepts_a_matching_record():
+    plugin = gates.load_toml((OURS / "plugin.toml").read_text(encoding="utf-8"))
+    result = gates.verify_fingerprints(plugin, HOST_BUILD, "rustc 1.98.1 (48a229cea 2026-09-01)")
+    assert result == {"rustc": HOST_BUILD["rustc_version"]}
+
+
+def test_verify_fingerprints_escalates_on_a_compiler_mismatch():
+    plugin = gates.load_toml((OURS / "plugin.toml").read_text(encoding="utf-8"))
+    with pytest.raises(gates.Escalate):
+        gates.verify_fingerprints(plugin, HOST_BUILD, "rustc 1.99.0 (b940084d7 2026-09-28)")
+
+
+def test_verify_fingerprints_escalates_when_the_plugin_omits_the_compiler():
+    plugin = gates.load_toml((OURS / "plugin.toml").read_text(encoding="utf-8"))
+    del plugin["opencad"]["rustc_version"]
+    with pytest.raises(gates.Escalate):
+        gates.verify_fingerprints(plugin, HOST_BUILD, "rustc 1.98.1 (48a229cea 2026-09-01)")
+
+
+def test_verify_fingerprints_escalates_when_the_declaration_drifts_from_the_record():
+    plugin = gates.load_toml((OURS / "plugin.toml").read_text(encoding="utf-8"))
+    drifted = dict(HOST_BUILD, rustc_version="rustc 1.99.0 (b940084d7 2026-09-28)")
+    with pytest.raises(gates.Escalate):
+        gates.verify_fingerprints(plugin, drifted, "rustc 1.99.0 (b940084d7 2026-09-28)")
 
 
 # --------------------------------------------------------------------------
@@ -452,3 +551,35 @@ def test_cli_exit_codes(tmp_path):
     )
     assert result.returncode == 2
     assert "UNPARSEABLE" in result.stderr
+
+
+def test_cli_current_pin_emits_fingerprint_freshness(tmp_path):
+    """The detect job greps fingerprints_current out of current-pin; the CLI
+    must always emit it, with or without the provenance files present."""
+    host_build = tmp_path / "host-build.json"
+    host_build.write_text(json.dumps({
+        "tag": "v2026.36",
+        "rustc_version": "rustc 1.98.1 (48a229cea 2026-09-01)",
+    }), encoding="utf-8")
+    toolchain = tmp_path / "rust-toolchain.toml"
+    toolchain.write_text('[toolchain]\nchannel = "1.98.1"\nprofile = "minimal"\n', encoding="utf-8")
+
+    result = run_cli(
+        "current-pin",
+        "--cargo", str(OURS / "Cargo.toml"),
+        "--host-build", str(host_build),
+        "--rust-toolchain", str(toolchain),
+    )
+    assert result.returncode == 0
+    assert "fingerprints_current=true" in result.stdout
+    assert "host_build_tag=v2026.36" in result.stdout
+    assert "toolchain_channel=1.98.1" in result.stdout
+
+    result = run_cli(
+        "current-pin",
+        "--cargo", str(OURS / "Cargo.toml"),
+        "--host-build", str(tmp_path / "absent.json"),
+        "--rust-toolchain", str(tmp_path / "absent.toml"),
+    )
+    assert result.returncode == 0
+    assert "fingerprints_current=false" in result.stdout

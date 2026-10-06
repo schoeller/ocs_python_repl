@@ -198,6 +198,12 @@ and document why the override exists in `manual_overrides`.
   by the `repin` workflow. Never edit them by hand; see `RELEASE.md` and
   `.github/scripts/repin_gates.py`.
 
+- **Release fingerprints:** `host-build.json`, `rust-toolchain.toml` and the
+  `[opencad]` table in `plugin.toml` (`rustc_version`, `acadrust_source`) are
+  recorded from the host's release run by the `repin` workflow. The host's
+  Plugin Manager refuses API v4+ plugins whose fingerprints differ from its
+  own build; never edit them by hand.
+
 - **Unit enum variants:** enums with only unit variants are exposed as Python
   strings. Data enums / structs are exposed as generated dataclasses.
 

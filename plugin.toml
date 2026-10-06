@@ -9,4 +9,10 @@ command_prefixes = ["PYTHONSHELL"]
 xdata_apps = ["PYREPL"]
 
 [opencad]
+# Both fingerprints are rewritten by the repin/release workflows
+# (repin_gates.py inject-source) to match the host build this plugin is
+# pinned against. The host's Plugin Manager compares them byte-for-byte:
+# rustc_version against the host's build-time compiler (Rust has no stable
+# ABI) and the 40-hex commit in acadrust_source against the host's codec.
+rustc_version = "rustc 1.99.0 (b940084d7 2026-09-28)"
 acadrust_source = "git+https://github.com/HakanSeven12/opencadcodec.git?rev=fe69506#fe69506cb99dea6f4c4a73b690a27fdf04403ea0"

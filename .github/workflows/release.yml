@@ -52,7 +52,23 @@ jobs:
         with:
           ref: ${{ inputs.tag || github.ref_name }}
 
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Install the host's recorded compiler
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The host's Plugin Manager compares plugin.toml's rustc_version
+          # with its own build-time compiler byte-for-byte; Rust has no
+          # stable ABI, so the plugin must be built with the exact channel
+          # record_host_build.py recorded from the host's release run.
+          # rustup no longer auto-installs the toolchain named in
+          # rust-toolchain.toml, so install it explicitly.
+          if [ ! -f rust-toolchain.toml ]; then
+            echo "::error::rust-toolchain.toml is missing — the release build must use the compiler recorded from the host build"
+            exit 1
+          fi
+          CHANNEL=$(grep -m1 '^channel' rust-toolchain.toml | cut -d'"' -f2)
+          rustup toolchain install "$CHANNEL" --profile minimal
+          rustc --version
 
       - name: Check tag matches the declared plugin version
         shell: bash
@@ -71,6 +87,18 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+
+      - name: Gate on the build compiler matching the host's
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Fail before a multi-minute build when the toolchain or the
+          # committed fingerprints cannot match the shipped host: the Plugin
+          # Manager would refuse the binary as incompatible.
+          python3 .github/scripts/repin_gates.py verify-fingerprints \
+            --plugin-toml plugin.toml \
+            --host-build host-build.json \
+            --rustc-version "$(rustc --version)"
 
       - name: Build release cdylib
         shell: bash
@@ -105,17 +133,21 @@ jobs:
           cp target/release/*.${{ matrix.ext }} "dist/${{ matrix.asset }}"
           cp plugin.toml dist/plugin.toml
 
-      - name: Inject codec fingerprint into plugin.toml
+      - name: Inject release fingerprints into plugin.toml
         shell: bash
         run: |
-          # The fingerprint is the resolved source of whatever crate carries
-          # the entity types at this pin (acadrust, renamed opencadcodec at
-          # host v2026.39) — discovered from Cargo.toml's dependency, never
-          # hardcoded. Same code path the re-pin workflow uses.
+          # Both fingerprints the host's Plugin Manager gates API v4+ plugins
+          # on: the resolved source of whatever crate carries the entity
+          # types at this pin (acadrust, renamed opencadcodec at host
+          # v2026.39) — discovered from Cargo.toml's dependency, never
+          # hardcoded — and the full compiler line of this build, which the
+          # toolchain gate above proved equals the host's. Same code path
+          # the re-pin workflow uses.
           python3 .github/scripts/repin_gates.py inject-source \
             --plugin-toml dist/plugin.toml \
             --our-lock Cargo.lock \
-            --cargo Cargo.toml
+            --cargo Cargo.toml \
+            --rustc-version "$(rustc --version)"
 
       - uses: softprops/action-gh-release@v2
         with:

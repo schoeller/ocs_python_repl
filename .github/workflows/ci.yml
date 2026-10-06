@@ -43,11 +43,27 @@ jobs:
       PYO3_PYTHON: python
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Install the host's recorded compiler
+        run: |
+          set -euo pipefail
+          # Build and test with the exact compiler the shipped host was
+          # built with (recorded by record_host_build.py): the host's Plugin
+          # Manager refuses API v4+ plugins built with any other rustc.
+          # rustup no longer auto-installs the toolchain named in
+          # rust-toolchain.toml, so install it explicitly.
+          rustup toolchain install "$(grep -m1 '^channel' rust-toolchain.toml | cut -d'"' -f2)" --profile minimal
+          rustc --version
       - uses: Swatinem/rust-cache@v2
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: The fingerprint record backs the pin
+        run: |
+          # host-build.json / rust-toolchain.toml must match the pinned host
+          # tag, or the nightly would need to refresh them; fail here so a
+          # stale record never reaches a release.
+          python3 .github/scripts/repin_gates.py current-pin | tee /tmp/pin.out
+          grep -q '^fingerprints_current=true$' /tmp/pin.out
       - name: Build against the committed lockfile
         run: cargo build --release --locked
       - name: Test against the committed lockfile

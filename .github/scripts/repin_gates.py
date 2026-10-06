@@ -39,6 +39,7 @@ lead time instead of a blocked release.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import sys
@@ -91,6 +92,11 @@ def slug(url: str) -> str:
 
 def read(path: str | Path) -> str:
     return Path(path).read_text(encoding="utf-8")
+
+
+def read_optional(path: str | Path) -> str | None:
+    entry = Path(path)
+    return entry.read_text(encoding="utf-8") if entry.exists() else None
 
 
 def load_toml(text: str) -> dict:
@@ -632,39 +638,121 @@ def verify_lockstep(upstream_lock: str, our_lock: str) -> list[str]:
     return mismatches
 
 
-def inject_source(our_cargo: dict, our_lock: str, plugin_text: str, codec_package: str | None = None) -> tuple[str, str]:
-    """Record the resolved codec source in plugin.toml's [opencad] table.
+def upsert_toml_string(text: str, section: str, key: str, value: str) -> str:
+    """Set `key = "value"` inside [section]: an existing line is replaced in
+    place so hand-arranged comments survive; a missing key is inserted
+    directly under the section header."""
+    header = re.search(rf"^\[{re.escape(section)}\][ \t]*\n", text, re.M)
+    if not header:
+        return text.rstrip() + f'\n\n[{section}]\n{key} = "{value}"\n'
+    start = header.end()
+    next_section = re.search(r"^\[", text[start:], re.M)
+    end = start + next_section.start() if next_section else len(text)
+    body = text[start:end]
+    pattern = re.compile(rf"(?m)^{re.escape(key)}[ \t]*=[ \t]*\"[^\"]*\"[ \t]*$")
+    line = f'{key} = "{value}"'
+    if pattern.search(body):
+        body = pattern.sub(line, body)
+    else:
+        body = line + "\n" + body
+    return text[:start] + body + text[end:]
 
-    The field keeps its historical name `acadrust_source`: it is the
-    fingerprint of whatever crate carries the entity types this week."""
+
+def inject_source(
+    our_cargo: dict,
+    our_lock: str,
+    plugin_text: str,
+    codec_package: str | None = None,
+    rustc_version: str | None = None,
+) -> tuple[str, str]:
+    """Record the release fingerprints in plugin.toml's [opencad] table.
+
+    `acadrust_source` keeps its historical name: it is the full locked
+    source of whatever crate carries the entity types this week. The host's
+    Plugin Manager gates API v4+ plugins on the 40-hex commit inside it and
+    on `rustc_version`, the full compiler line of the build (Rust has no
+    stable ABI). A source without a parseable 40-hex hash would be flagged
+    incompatible by the host, so it is refused here."""
     if codec_package is None:
         codec_package = our_codec_dep(our_cargo)["package"]
     source = locked_package(our_lock, codec_package).get("source")
     if not source or not source.startswith("git+"):
         raise Unparseable(f"{codec_package!r} is not locked to a git source: {source!r}")
-    if "[opencad]" not in plugin_text:
-        plugin_text = plugin_text.rstrip() + "\n\n[opencad]\n"
-    plugin_text, n = re.subn(
-        r'^(\[opencad\]\s*\n)(?:acadrust_source\s*=\s*"[^"]*"\s*\n)?',
-        rf'\g<1>acadrust_source = "{source}"\n',
-        plugin_text,
-        flags=re.M,
-    )
-    if n == 0:
-        plugin_text = re.sub(
-            r"^(\[opencad\]\s*\n)",
-            rf'\g<1>acadrust_source = "{source}"\n',
-            plugin_text,
-            flags=re.M,
+    if acadrust_source_hash(source) is None:
+        raise Escalate(
+            f"the locked codec source {source!r} carries no 40-hex commit hash — the "
+            "host's Plugin Manager would refuse it as incompatible"
         )
+    plugin_text = upsert_toml_string(plugin_text, "opencad", "acadrust_source", source)
+    if rustc_version is not None:
+        if not rustc_version.strip():
+            raise Escalate("the build's rustc --version output is empty")
+        plugin_text = upsert_toml_string(plugin_text, "opencad", "rustc_version", rustc_version.strip())
     return plugin_text, source
 
 
-def current_pin(cargo_text: str) -> dict:
+def acadrust_source_hash(source: str) -> str | None:
+    """The 40-hex commit after the '#', parsed exactly the way the host's
+    Plugin Manager parses it."""
+    tail = source.rsplit("#", 1)[-1]
+    if len(tail) == 40 and all(c in "0123456789abcdefABCDEF" for c in tail):
+        return tail
+    return None
+
+
+def rustc_lines_compatible(a: str, b: str) -> bool:
+    """The host's rustc_versions_compatible, mirrored so this gate cannot
+    drift from what the Plugin Manager actually enforces: token-by-token
+    equality after whitespace normalisation."""
+    at, bt = a.split(), b.split()
+    return len(at) == len(bt) and all(
+        x == y or x.lower() == y.lower() for x, y in zip(at, bt)
+    )
+
+
+def verify_fingerprints(plugin_toml: dict, host_build: dict, built_rustc: str) -> dict:
+    """The fingerprints the release is about to ship must match the host
+    build this plugin is pinned against. The host's Plugin Manager compares
+    plugin.toml's rustc_version with its own build-time compiler (Rust has
+    no stable ABI) and the codec hash in acadrust_source with its own; a
+    mismatched release ships an 'Incompatible' badge to every user."""
+    opencad = plugin_toml.get("opencad", {})
+    if not isinstance(opencad, dict):
+        raise Unparseable("[opencad] is not a table in plugin.toml")
+    declared_rustc = opencad.get("rustc_version")
+    if not isinstance(declared_rustc, str) or not declared_rustc.strip():
+        raise Escalate(
+            "plugin.toml does not declare [opencad] rustc_version — the host's "
+            "Plugin Manager refuses API v4+ plugins without the compiler fingerprint"
+        )
+    recorded_rustc = host_build.get("rustc_version")
+    if not isinstance(recorded_rustc, str) or not recorded_rustc.strip():
+        raise Unparseable("cannot read rustc_version from host-build.json")
+    if not rustc_lines_compatible(built_rustc.strip(), recorded_rustc):
+        raise Escalate(
+            f"the build ran with {built_rustc.strip()!r} but the shipped host was built "
+            f"with {recorded_rustc!r} — the Plugin Manager would refuse the binary; "
+            "check rust-toolchain.toml"
+        )
+    if declared_rustc.strip() != recorded_rustc:
+        raise Escalate(
+            f"plugin.toml declares rustc_version {declared_rustc!r} but the host build "
+            f"record says {recorded_rustc!r}"
+        )
+    return {"rustc": recorded_rustc}
+
+
+def current_pin(
+    cargo_text: str,
+    host_build_text: str | None = None,
+    toolchain_text: str | None = None,
+) -> dict:
     """The pin we ship today. The tag is read from
     [package.metadata.upstream] and must agree with the tag= spelled in the
     ocs_plugin_api dependency lines — two spellings of one fact that drift
-    silently are worse than one."""
+    silently are worse than one. The fingerprint record (host-build.json +
+    rust-toolchain.toml) must back the same pin, or the nightly re-runs so
+    the Plugin Manager never sees a plugin whose fingerprints lag its pin."""
     cargo = load_toml(cargo_text)
     metadata = cargo.get("package", {}).get("metadata", {}).get("upstream", {})
     tag = metadata.get("tag") if isinstance(metadata, dict) else None
@@ -678,12 +766,33 @@ def current_pin(cargo_text: str) -> dict:
         )
     dep = our_codec_dep(cargo)
     version = cargo.get("package", {}).get("version")
+
+    host_build: dict = {}
+    if host_build_text is not None:
+        host_build = json.loads(host_build_text)
+        if not isinstance(host_build, dict):
+            raise Unparseable("host-build.json is not a JSON object")
+    host_build_tag = host_build.get("tag") if isinstance(host_build.get("tag"), str) else ""
+    host_rustc = host_build.get("rustc_version") if isinstance(host_build.get("rustc_version"), str) else ""
+    channel = ""
+    if toolchain_text:
+        match = re.search(r'(?m)^channel\s*=\s*"([^"]+)"', toolchain_text)
+        if match:
+            channel = match.group(1)
+    recorded_channel = host_rustc.split()[1] if len(host_rustc.split()) > 1 else ""
+    fingerprints_current = (
+        host_build_tag == tag and bool(channel) and recorded_channel != "" and channel == recorded_channel
+    )
+
     return {
         "tag": tag,
         "package": dep["package"],
         "url": dep["url"],
         "rev": dep["rev"],
         "version": version or "",
+        "host_build_tag": host_build_tag,
+        "toolchain_channel": channel,
+        "fingerprints_current": fingerprints_current,
     }
 
 
@@ -709,6 +818,8 @@ def main(argv: list[str] | None = None) -> None:
 
     p = sub.add_parser("current-pin", help="print the pin we ship today")
     p.add_argument("--cargo", default="Cargo.toml")
+    p.add_argument("--host-build", default="host-build.json")
+    p.add_argument("--rust-toolchain", default="rust-toolchain.toml")
 
     p = sub.add_parser("host-plan", help="reproduce the codec source the host resolves")
     p.add_argument("--plugin-api-manifest", required=True)
@@ -759,11 +870,17 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--upstream-lock", required=True)
     p.add_argument("--our-lock", default="Cargo.lock")
 
-    p = sub.add_parser("inject-source", help="record the codec source in plugin.toml")
+    p = sub.add_parser("inject-source", help="record the release fingerprints in plugin.toml")
     p.add_argument("--codec-package", default=None)
+    p.add_argument("--rustc-version", default=None)
     p.add_argument("--cargo", default="Cargo.toml")
     p.add_argument("--our-lock", default="Cargo.lock")
     p.add_argument("--plugin-toml", default="plugin.toml")
+
+    p = sub.add_parser("verify-fingerprints", help="release fingerprints must match the host build")
+    p.add_argument("--plugin-toml", default="plugin.toml")
+    p.add_argument("--host-build", default="host-build.json")
+    p.add_argument("--rustc-version", required=True)
 
     args = vars(parser.parse_args(argv))
     command = args.pop("command")
@@ -772,6 +889,8 @@ def main(argv: list[str] | None = None) -> None:
         pin = guarded(
             current_pin,
             cargo_text=read(args.pop("cargo")),
+            host_build_text=read_optional(args.pop("host_build")),
+            toolchain_text=read_optional(args.pop("rust_toolchain")),
         )
         emit(
             current_tag=pin["tag"],
@@ -779,6 +898,9 @@ def main(argv: list[str] | None = None) -> None:
             current_url=pin["url"],
             current_rev=pin["rev"],
             current_version=pin["version"],
+            host_build_tag=pin["host_build_tag"],
+            toolchain_channel=pin["toolchain_channel"],
+            fingerprints_current=str(pin["fingerprints_current"]).lower(),
         )
     elif command == "host-plan":
         plan = guarded(
@@ -873,9 +995,18 @@ def main(argv: list[str] | None = None) -> None:
             our_lock=read(args.pop("our_lock")),
             plugin_text=read(plugin_path),
             codec_package=args.pop("codec_package"),
+            rustc_version=args.pop("rustc_version"),
         )
         write_text(plugin_path, plugin_text)
         emit(codec_source=source)
+    elif command == "verify-fingerprints":
+        result = guarded(
+            verify_fingerprints,
+            plugin_toml=load_toml(read(args.pop("plugin_toml"))),
+            host_build=json.loads(read(args.pop("host_build"))),
+            built_rustc=args.pop("rustc_version"),
+        )
+        emit(fingerprint_rustc=result["rustc"])
 
 
 if __name__ == "__main__":
