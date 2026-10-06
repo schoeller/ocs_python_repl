@@ -20,6 +20,13 @@ name: repin
 #   workflow_dispatch — manual re-pin (upstream_tag defaults to the latest
 #                       release; dry_run runs every gate and ships nothing).
 #
+# Shipping is PR-first with a direct-push fallback: the pull request is the
+# audit trail, but if the repository forbids the default token from creating
+# or merging pull requests ("Allow GitHub Actions to create and approve pull
+# requests", off by default — it silently blocked the v2026.39..v2026.40.1
+# re-pins while every build and test was green), the re-pin is pushed
+# straight to main so the release still ships.
+#
 # The schedule lives here rather than in a separate polling workflow: the
 # detect job below is the only thing that decides whether a re-pin is due,
 # which keeps "is anything watching upstream?" a one-file question.
@@ -303,10 +310,23 @@ jobs:
           and the revert point.
           EOF
           )
-          gh pr create --repo "$GITHUB_REPOSITORY" \
+          # The PR is the audit trail, but shipping the release is the point.
+          # If the repository forbids the default token from creating pull
+          # requests ("Allow GitHub Actions to create and approve pull
+          # requests" under Settings - Actions - Workflow permissions, off
+          # by default — exactly this blocked the v2026.39, v2026.40 and
+          # v2026.40.1 re-pins with "Resource not accessible by
+          # integration"), fall back to a direct push to main in the next
+          # step instead of failing the release.
+          if gh pr create --repo "$GITHUB_REPOSITORY" \
             --base main --head "repin/$TAG" \
             --title "release: v${{ steps.bump.outputs.newver }} — re-pin to host $TAG" \
-            --body "$body"
+            --body "$body"; then
+            echo "via=pr" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::could not open the re-pin pull request (usually 'Resource not accessible by integration': enable 'Allow GitHub Actions to create and approve pull requests' under Settings - Actions - Workflow permissions). Shipping via a direct push to main instead."
+            echo "via=direct" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Merge the pull request and tag the release
         if: ${{ !inputs.dry_run }}
@@ -314,7 +334,29 @@ jobs:
         run: |
           set -euo pipefail
           NEWVER="${{ steps.bump.outputs.newver }}"
-          gh pr merge --repo "$GITHUB_REPOSITORY" "repin/$TAG" --merge --delete-branch
+
+          merge_to_main() {
+            # Fast-forward main to the re-pin branch; rebase once if main
+            # moved during the run, and fail loudly if even that conflicts.
+            if git push origin "repin/$TAG:main"; then return 0; fi
+            echo "::notice::main moved during the run — rebasing the re-pin branch."
+            git fetch origin main
+            git rebase origin/main
+            git push --force-with-lease origin "repin/$TAG"
+            git push origin "repin/$TAG:main"
+          }
+
+          if [ "${{ steps.pr.outputs.via }}" = "pr" ]; then
+            if ! gh pr merge --repo "$GITHUB_REPOSITORY" "repin/$TAG" --merge --delete-branch; then
+              echo "::warning::pull request merge failed; shipping via a direct push to main instead."
+              merge_to_main
+              git push origin --delete "repin/$TAG" || true
+            fi
+          else
+            merge_to_main
+            git push origin --delete "repin/$TAG" || true
+          fi
+
           git fetch origin main
           MERGE_SHA=$(git rev-parse origin/main)
           git tag "v$NEWVER" "$MERGE_SHA"
@@ -341,6 +383,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       issues: write
+      actions: read
     env:
       TAG: ${{ needs.detect.outputs.tag }}
       GH_TOKEN: ${{ github.token }}
@@ -355,6 +398,16 @@ jobs:
         id: why
         run: |
           set -uo pipefail
+          # Name the exact failing step so the issue cannot mislead: the
+          # v2026.40.1 escalation said "most likely the plugin no longer
+          # compiles" while every build and test had been green — the run
+          # died opening the pull request.
+          FAILED_STEP=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs" \
+            --jq '[.jobs[].steps[] | select(.conclusion == "failure") | .name] | unique | join(", ")' \
+            2>/dev/null || true)
+          echo "failed_step=$FAILED_STEP" >> "$GITHUB_OUTPUT"
+          echo "failing step(s): ${FAILED_STEP:-unknown}"
+
           if [ -z "$TAG" ]; then
             echo "verdict=detect" >> "$GITHUB_OUTPUT"
             exit 0
@@ -405,6 +458,7 @@ jobs:
       - name: Open or update the escalation issue
         env:
           VERDICT: ${{ steps.why.outputs.verdict }}
+          FAILED_STEP: ${{ steps.why.outputs.failed_step }}
         run: |
           set -euo pipefail
           if [ -n "$TAG" ]; then
@@ -436,11 +490,17 @@ jobs:
           EOF
             ) ;;
             downstream)
-              detail=$(cat <<'EOF'
-          The manifests parsed and the read-only gates passed; the failure is
-          in the build, test or headless-host steps — most likely the plugin
-          no longer compiles against the new upstream contract. Read the
-          failing step in the run log.
+              detail=$(cat <<EOF
+          The manifests parsed and the read-only gates passed; the failing
+          step was "$FAILED_STEP".
+
+          If that is a build, test or headless-host step, the plugin most
+          likely no longer compiles against the new upstream contract — read
+          the failing step in the run log. If it is the pull-request or merge
+          step, the re-pin was green but could not ship: check "Allow GitHub
+          Actions to create and approve pull requests" under Settings -
+          Actions - Workflow permissions. The workflow falls back to a
+          direct push to main, so shipping should not stay blocked on it.
           EOF
             ) ;;
             *)
@@ -453,6 +513,7 @@ jobs:
 
           **Run:** $RUN_URL
           **Diagnosis:** $VERDICT
+          **Failing step:** ${FAILED_STEP:-unknown}
 
           $detail
           EOF
@@ -462,7 +523,7 @@ jobs:
             --json number,title --jq "[.[] | select(.title == \"$title\")][0].number // empty")
           if [ -n "$existing" ]; then
             gh issue comment "$existing" --repo "$GITHUB_REPOSITORY" \
-              --body "Still blocked as of $RUN_URL (diagnosis: $VERDICT)."
+              --body "Still blocked as of $RUN_URL (diagnosis: $VERDICT, step: ${FAILED_STEP:-unknown})."
           else
             gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body "$body"
           fi

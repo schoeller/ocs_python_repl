@@ -85,7 +85,9 @@ After all gates pass:
 3. Tags the resulting `main` commit with the new plugin version (for example, `v0.1.26`).
 4. Calls `.github/workflows/release.yml` via `workflow_call` to build and publish the release assets.
 
-If any gate fails, an escalation job re-runs the read-only gates to classify the failure (parser gap, human decision, or downstream build/test break) and opens or updates an issue titled `repin blocked: host <tag> needs a human` with the diagnosis and the fix recipe.
+Shipping is PR-first with a **direct-push fallback**: if pull-request creation or merge fails — most commonly because the repository setting *Allow GitHub Actions to create and approve pull requests* (Settings → Actions → Workflow permissions, off by default) denies the default token, which is exactly how the v2026.39–v2026.40.1 re-pins stalled while every build and test was green — the workflow warns, pushes the re-pin branch straight to `main` (rebasing once if `main` moved during the run), and continues to the tag. A missing audit trail must never block the release itself; the commit on `main` still carries the full pin description.
+
+If any gate fails, an escalation job re-runs the read-only gates to classify the failure (parser gap, human decision, or downstream break), records the exact failing step name from the run, and opens or updates an issue titled `repin blocked: host <tag> needs a human` with the diagnosis, the failing step and the fix recipe.
 
 ---
 
